@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+import "tensor.proto";
+
+service CommServer {
+  rpc send_buffer (stream SendTensor) returns (SendTensorReply) {}
+  rpc buffer_status (CheckBufferStatus) returns (BufferStatusReply) {}
+}
+
+message CheckBufferStatus {
+  string name = 1;
+  string type = 2;
+}
+
+message BufferStatusReply {
+  string status = 1;
+}

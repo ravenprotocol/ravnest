@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+
+message SendTensor {
+    TensorChunk tensor_chunk = 1;
+    string type = 2;
+}
+
+message SendTensorReply {
+    bool reply = 1; 
+}
+
+message TensorChunk {
+    bytes buffer = 1;
+    string type = 2; //$weights or $gradients
+    int32 tensor_size = 3;
+  }
