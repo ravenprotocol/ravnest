@@ -4,7 +4,7 @@ import grpc
 import threading
 import multiprocessing as mp
 import numpy as np
-import _pickle as cPickle
+import pickle
 import time
 from utils import *
 from endpoints import GrpcService
@@ -12,7 +12,7 @@ from server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
 from server_pb2 import CheckBufferStatus
 
 class Node():
-    def __init__(self, name=None, local_host=None, local_port=None,forward_target_host=None, forward_target_port=None, backward_target_host=None, backward_target_port=None, model=None, optimizer=None, labels=None, test_labels=None):
+    def __init__(self, name=None, submod_file=None, template_path=None, local_host=None, local_port=None,forward_target_host=None, forward_target_port=None, backward_target_host=None, backward_target_port=None, model=None, optimizer=None, labels=None, test_labels=None):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -33,9 +33,20 @@ class Node():
         self.output_tensors = {}
         self.input_tensors = {}
         self.n_backwards = 0
+        self.forward_pass_id = 0
+
+        self.submod_file = submod_file
+
+        with open('{}/{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
+            self.input_template = pickle.load(fout)
+
+        with open('{}/{}_output.pkl'.format(template_path, submod_file), 'rb') as fout:
+            self.output_template = pickle.load(fout)
 
         if self.backward_target_host is None and self.backward_target_port is None:
             self.node_type = 'root'
+            with open('{}/model_inputs.pkl'.format(template_path), 'rb') as fout:
+                self.model_inputs_template = pickle.load(fout)
             self.optimizer = optimizer(current_model_params_clone(self.model))
         elif self.forward_target_host is None and self.forward_target_port is None:
             self.node_type = 'leaf'
@@ -77,34 +88,39 @@ class Node():
                 action = value['action']
 
                 if action == 'backward':
-                    gradient = value['data']
-                    tensor_id = value['tensor_id']
-                    output_tensor = self.output_tensors[tensor_id]
-                
+                    gradient_dict = value['data']
+                    forward_pass_id = value['forward_pass_id']
+                    
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
-                    if len(self.output_tensors) > 1:
-                        output_tensor.backward(gradient, retain_graph=True)
-                    else:
-                        output_tensor.backward(gradient)
+
+                    for key, value in gradient_dict.items():
+                        output_tensor = self.output_tensors[key]
+                                    
+                        if len(self.output_tensors) > 1:
+                            output_tensor.backward(value, retain_graph=True)
+                        else:
+                            output_tensor.backward(value)
+
+                        del self.output_tensors[key]
 
                     load_grads_into_optimizer(self.model, self.optimizer)
                     self.optimizer.step()
                     load_optim_weights_into_model(self.model, self.optimizer)
 
                     if self.node_type != 'root':
-                        gradients = self.input_tensors[tensor_id].grad
+                        gradients = self.create_backward_payload(forward_pass_id=forward_pass_id)
                         self.send_buffer.append({'action':'backward', 
-                                             'data':gradients, 
-                                             'tensor_id':value['tensor_id']})
+                                                'forward_pass_id':forward_pass_id, 
+                                                'data':gradients, 
+                                                })
 
                         self.trigger_send(type='backward', target_host=self.backward_target_host, target_port=self.backward_target_port)
                     
-                    del self.output_tensors[tensor_id]
-                    if self.input_tensors.get(tensor_id, None) is not None:
-                        del self.input_tensors[tensor_id]
+                    if self.input_tensors.get(forward_pass_id, None) is not None:
+                        del self.input_tensors[forward_pass_id]
 
-                    print('Backward done for: ', tensor_id)
+                    print('Backward done')
                     self.n_backwards += 1
 
             if len(self.load_forward_buffer) != 0:
@@ -115,83 +131,334 @@ class Node():
                 action = value['action']
                 
                 if action == 'forward':
-                    inputs = value['data']
-                    tensor_id = value['tensor_id']
-                    self.input_tensors[tensor_id] = inputs
-                    output = self.model(inputs)
-                    self.output_tensors[tensor_id] = output
+                    data = value['data']
+                    forward_pass_id = value['forward_pass_id']
+                    model_args = self.create_model_args(data, forward_pass_id=forward_pass_id)
+                                
+                    if not self.model.training:
+                        self.model.train()
+
+                    output = self.model(*model_args)
+
+                    payload = self.create_forward_payload(output)
+
+
+                    # print('OUT: ', type(output), len(output))
+                    
+                    final_payload = data
+                    final_payload[self.submod_file] = payload
+
                     self.send_buffer.append({'data_id':value['data_id'],
-                                'tensor_id': tensor_id,
-                                'data': output,
-                                'input_size': value['input_size'],
-                                'action': 'find_loss'})
+                                            'forward_pass_id':forward_pass_id,
+                                            'data': final_payload,
+                                            'input_size': value['input_size'],
+                                            'action': 'find_loss'})
+                    
                     self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
-                    print('Forward Done for: ', tensor_id)
+                    print('Forward Done')
 
                 elif action == 'find_loss':
                     data_id = value['data_id']
                     targets = self.labels[data_id:data_id+value['input_size']]
-                    inputs = value['data']
-                    outputs = self.model(inputs)
+                    
+                    data = value['data']
 
-                    loss = torch.nn.functional.mse_loss(outputs, targets)
+                    # print('data in find_loss: ', data)
+
+                    model_args = self.create_model_args(data)
+
+
+                    if not self.model.training:
+                        self.model.train()
+
+                    outputs = self.model(*model_args.values())
+
+                    # loss = torch.nn.functional.mse_loss(outputs, targets)
+                    loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
-                    gradients = inputs.grad
+
+                    gradients = self.create_backward_payload(model_args=model_args)
 
                     # print('shape of gradients: ', gradients.shape, value['tensor_id'])
 
                     self.send_buffer.append({'action':'backward', 
                                              'data':gradients, 
-                                             'tensor_id':value['tensor_id']})
+                                             'forward_pass_id':value['forward_pass_id'],
+                                             })
                     self.trigger_send(type='backward', target_host=self.backward_target_host, target_port=self.backward_target_port)
-                    print('Find loss done for: ', value['tensor_id'])
+                    print('Find loss done')
                     self.n_backwards += 1
 
                 elif action == 'no_grad_forward':
                     print('No grad forward')
-                    ip = value['data']
+                    data = value['data']
+                    model_args = self.create_no_grad_model_args(data)
+                    self.model.eval()            
                     with torch.no_grad():
-                        out = self.model(ip)
+                        output = self.model(*model_args)
 
-                    self.send_buffer.append({'data':out, 'action':'find_accuracy'})
+                    payload = self.create_no_grad_forward_payload(output)
+
+                    final_payload = data
+                    final_payload[self.submod_file] = payload
+
+                    self.send_buffer.append({
+                                            'data': final_payload,
+                                            'action': value['output_type']                                            
+                                            })
+
                     self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
 
-                elif action == 'find_accuracy':
+                elif action == 'accuracy':
                     print('Finding accuracy')
-                    ip = value['data']
+                    data = value['data']
+                    model_args = self.create_no_grad_model_args(data)
+        
+                    self.model.eval()
                     with torch.no_grad():
-                        y_pred = self.model(ip)
+                        y_pred = self.model(*model_args)
                         y_pred = np.argmax(y_pred.detach().numpy(), axis=-1)
                         y_test = np.argmax(self.test_labels, axis=-1)
                         accuracy = np.sum(y_pred == y_test, axis=0)/len(y_test)
                         print('\nTest Accuracy: ', accuracy)
 
+                elif action == 'prediction':
+                    data = value['data']
+                    print('Prediction: ', data)
+                    model_args = self.create_no_grad_model_args(data)
+                    self.model.eval()
+                    with torch.no_grad():
+                        pred = self.model(*model_args)
+                    print('Predicted: ', pred)
+
+                elif action == 'save_submodel':
+                    script = torch.jit.script(self.model)
+                    script.save('trained_submodels/{}.pt'.format(self.submod_file))
+                    if self.node_type != 'leaf':
+                        self.send_buffer.append({'action': 'save_submodel'})
+                        self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
+                    print('SAVE done')
+                        
 
     def forward_compute(self, data_id=None, tensors=None):
         
-        out = self.model(tensors)
-        self.output_tensors[self.tensor_id] = out
+        if not self.model.training:
+            self.model.train()
+
+        output = self.model(tensors)
+
+        payload = self.create_forward_payload(output, tensors=tensors)
+
+        # print('OUT: ', type(output), len(output))
         
+        final_payload = {}
+        final_payload[self.submod_file] = payload
+
         self.send_buffer.append({'data_id':data_id,
-                                'tensor_id': self.tensor_id,
-                                'data': out,
+                                 'forward_pass_id':self.forward_pass_id,
+                                'data': final_payload,
                                 'input_size': tensors.shape[0],
                                 'action': 'forward'})
 
+        self.forward_pass_id += 1
         self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('Forward compute done for: ', self.tensor_id)
-        self.tensor_id += 1
-
-    def no_grad_forward_compute(self, tensors=None):
-        with torch.no_grad():
-            out = self.model(tensors)
-        self.send_buffer.append({'data': out,'action': 'no_grad_forward'})
-        self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
-
         
+
+    def no_grad_forward_compute(self, tensors=None, output_type=None):
+
+        self.model.eval()
+        with torch.no_grad():
+            output = self.model(tensors)
+
+        payload = self.create_no_grad_forward_payload(output, tensors=tensors)
+
+        final_payload = {}
+        final_payload[self.submod_file] = payload
+
+        self.send_buffer.append({
+                                'data': final_payload,
+                                'action': 'no_grad_forward',
+                                'output_type': output_type
+                                })
+
+        self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
+        print('No Grad forward compute done')
+
+              
+    def create_model_args(self, data, forward_pass_id=None):
+        if self.node_type != 'leaf':
+            model_args = []
+            self.input_tensors[forward_pass_id] = {}
+            for arg_pos, arg_metadata in self.input_template.items():
+                for k, v in arg_metadata.items(): 
+
+                    if isinstance(v, str) or isinstance(v, int):
+                        if self.submod_file in data[k][arg_pos]['target']:
+                            tensor_id = data[k][arg_pos]['tensor_id']
+                            model_args.append(data[k][arg_pos]['data'])
+                            if self.node_type != 'leaf':
+                                self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
+
+                            data[k][arg_pos]['target'].remove(self.submod_file)
+
+                            if len(data[k][arg_pos]['target']) == 0:
+                                del data[k][arg_pos]
+                            
+                            if len(data[k]) == 0:
+                                del data[k]
+
+                    elif self.submod_file in data[k][v]['target']:
+                        tensor_id = data[k][v]['tensor_id']
+                        if 'submod' in k or 'model_inputs' in k:                                    
+                            if isinstance(v, int):                                        
+                                model_args.append(data[k][v]['data'])   
+                                if self.node_type != 'leaf':
+                                    if k != 'model_inputs':
+                                        self.input_tensors[forward_pass_id][tensor_id] = data[k][v]['data']                                 
+                            # elif 'placeholder' in v:
+                            #     model_args.append(data[k][0]['data'])
+                            #     if self.node_type != 'leaf':
+                            #         self.input_tensors[forward_pass_id][tensor_id] = data[k][0]['data']
+
+                        data[k][v]['target'].remove(self.submod_file)
+
+                        if len(data[k][v]['target']) == 0:
+                            del data[k][v]
+                        
+                        if len(data[k]) == 0:
+                            del data[k]
+            
+        else:
+            model_args = {}
+            for arg_pos, arg_metadata in self.input_template.items():
+                for k, v in arg_metadata.items():
+                    if isinstance(v, str) or isinstance(v, int):
+                        if self.submod_file in data[k][arg_pos]['target']:
+                            tensor_id = data[k][arg_pos]['tensor_id']
+                            model_args[tensor_id] = data[k][arg_pos]['data']
+                            if self.node_type != 'leaf':
+                                self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
+
+                            data[k][arg_pos]['target'].remove(self.submod_file)
+
+                            if len(data[k][arg_pos]['target']) == 0:
+                                del data[k][arg_pos]
+                            
+                            if len(data[k]) == 0:
+                                del data[k]                            
+                    
+                    elif self.submod_file in data[k][v]['target']:
+                        tensor_id = data[k][v]['tensor_id']
+                        if 'submod' in k or 'model_inputs' in k:                                    
+                            if isinstance(v, int):                                        
+                                model_args[tensor_id] = data[k][v]['data']    
+                            # elif 'placeholder' in v:
+                            #     model_args[tensor_id] = data[k][0]['data']
+
+                        data[k][v]['target'].remove(self.submod_file)
+
+                        if len(data[k][v]['target']) == 0:
+                            del data[k][v]
+                        
+                        if len(data[k]) == 0:
+                            del data[k]
+        return model_args
+
+    def create_no_grad_model_args(self, data):
+        model_args = []
+        for arg_pos, arg_metadata in self.input_template.items():
+            for k, v in arg_metadata.items():                 
+                if isinstance(v, str) or isinstance(v, int):
+                    if self.submod_file in data[k][arg_pos]['target']:
+                        model_args.append(data[k][arg_pos]['data'])
+
+                        data[k][arg_pos]['target'].remove(self.submod_file)
+
+                        if len(data[k][arg_pos]['target']) == 0:
+                            del data[k][arg_pos]
+                        
+                        if len(data[k]) == 0:
+                            del data[k]
+                    
+                       
+                elif self.submod_file in data[k][v]['target']:
+                    if 'submod' in k or 'model_inputs' in k:                                    
+                        if isinstance(v, int):                                        
+                            model_args.append(data[k][v]['data'])       
+                        # elif 'placeholder' in v:
+                        #     model_args.append(data[k][0]['data'])
+            
+                    data[k][v]['target'].remove(self.submod_file)
+
+                    if len(data[k][v]['target']) == 0:
+                        del data[k][v]
+                    
+                    if len(data[k]) == 0:
+                        del data[k]
+            
+        return model_args
+
+    def create_backward_payload(self, forward_pass_id=None, model_args=None):        
+        grad_payload = {}
+        if self.node_type == 'leaf':
+            for key, value in model_args.items():
+                if value.requires_grad:
+                    grad_payload[key] = value.grad
+        else:
+            for key, value in self.input_tensors[forward_pass_id].items():
+                if value.requires_grad:
+                    grad_payload[key] = value.grad
+        return grad_payload
+
+    def create_forward_payload(self, output, tensors=None):
+        payload = self.output_template.copy()
+        for k, v in payload.items():
+            if isinstance(output, tuple):
+                out = output[k]
+            else:
+                out = output
+            payload[k]['data'] = out
+            payload[k]['tensor_id'] = self.tensor_id
+            self.output_tensors[self.tensor_id] = out
+            self.tensor_id += 1
+
+        if self.node_type == 'root':
+            payload['model_inputs'] = self.model_inputs_template
+            for k, v in self.model_inputs_template.items():
+                if payload['model_inputs'][k].get('target', None) is not None:
+                    payload['model_inputs'][k]['data'] = tensors[k]
+
+        return payload
+
+    def create_no_grad_forward_payload(self, output, tensors=None):
+        payload = self.output_template.copy()
+        for k, v in payload.items():
+            if isinstance(output, tuple):
+                out = output[k]
+            else:
+                out = output
+            payload[k]['data'] = out
+            
+        if self.node_type == 'root':
+            payload['model_inputs'] = self.model_inputs_template
+            for k, v in self.model_inputs_template.items():
+                if payload['model_inputs'][k].get('target', None) is not None:
+                    payload['model_inputs'][k]['data'] = tensors[k]
+
+        return payload
+
+    def trigger_save_submodel(self):
+        script = torch.jit.script(self.model)
+        script.save('trained_submodels/{}.pt'.format(self.submod_file))
+        self.send_buffer.append({'action': 'save_submodel'})
+        self.trigger_send(type='forward', target_host=self.forward_target_host, target_port=self.forward_target_port)
+        print('SAVE done')
+
     def trigger_send(self, type=None, target_host=None, target_port=None):
 
         if len(self.send_buffer) > 0:
