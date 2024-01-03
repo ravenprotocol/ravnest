@@ -1,20 +1,28 @@
 from server_pb2_grpc import CommServer
 from tensor_pb2 import SendTensor, SendTensorReply
-from server_pb2 import CheckBufferStatus, BufferStatusReply
+from server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk
 import multiprocessing as mp
 from typing import AsyncIterator
 from utils import aiter_with_timeout
 import _pickle as cPickle
 
 class GrpcService(CommServer):
-    def __init__(self, load_forward_buffer=None, load_backward_buffer=None, forward_lock=None, backward_lock=None):
+    def __init__(self, load_forward_buffer=None, 
+                 load_backward_buffer=None, 
+                 forward_lock=None, backward_lock=None, 
+                 reduce_ring_buffers = None, gather_ring_buffers=None,
+                 reduce_lock=None, gather_lock=None):
         super().__init__()
         self.load_forward_buffer = load_forward_buffer
         self.load_backward_buffer = load_backward_buffer
         self.forward_lock = forward_lock
         self.backward_lock = backward_lock
+        self.reduce_lock = reduce_lock
+        self.gather_lock = gather_lock
         self.forward_id_queue = []
         self.backward_id_queue = []
+        self.reduce_ring_buffers = reduce_ring_buffers
+        self.gather_ring_buffers = gather_ring_buffers
         
     def send_buffer(self, request: SendTensor, context) -> SendTensorReply:
        
@@ -51,7 +59,6 @@ class GrpcService(CommServer):
             self.backward_lock.release()
             
         return SendTensorReply(reply=True)
-        
 
     def buffer_status(self, request: CheckBufferStatus, context) -> BufferStatusReply:
        
@@ -74,3 +81,26 @@ class GrpcService(CommServer):
 
         return BufferStatusReply(status='wait')
 
+    def reduce_chunk(self, request:ReduceChunk) -> ReceivedChunk:
+        size_accumulated_data_buffer = 0
+        accumulated_data_buffer = b''
+
+        for data in request:
+            # buffer_type = data.type
+            ring_id = data.ring_id
+            data = data.data_chunk
+            buffer = data.buffer
+            data_type = data.type
+            data_size = data.data_size
+
+            if size_accumulated_data_buffer < data_size:
+                accumulated_data_buffer += buffer
+                size_accumulated_data_buffer = len(accumulated_data_buffer)
+
+        data = cPickle.loads(accumulated_data_buffer)
+
+        with self.reduce_lock:
+            if ring_id in self.reduce_ring_buffers:
+                self.reduce_ring_buffers[ring_id].append(data)
+            else:
+                self.reduce_ring_buffers[ring_id] = [data]

@@ -25,6 +25,16 @@ class CommServerStub(object):
                 request_serializer=server__pb2.CheckBufferStatus.SerializeToString,
                 response_deserializer=server__pb2.BufferStatusReply.FromString,
                 )
+        self.reduce_chunk = channel.stream_unary(
+                '/CommServer/reduce_chunk',
+                request_serializer=server__pb2.ReduceChunk.SerializeToString,
+                response_deserializer=server__pb2.ReceivedChunk.FromString,
+                )
+        self.gather_chunk = channel.stream_unary(
+                '/CommServer/gather_chunk',
+                request_serializer=server__pb2.GatherChunk.SerializeToString,
+                response_deserializer=server__pb2.ReceivedChunk.FromString,
+                )
 
 
 class CommServerServicer(object):
@@ -42,6 +52,18 @@ class CommServerServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def reduce_chunk(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def gather_chunk(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CommServerServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -54,6 +76,16 @@ def add_CommServerServicer_to_server(servicer, server):
                     servicer.buffer_status,
                     request_deserializer=server__pb2.CheckBufferStatus.FromString,
                     response_serializer=server__pb2.BufferStatusReply.SerializeToString,
+            ),
+            'reduce_chunk': grpc.stream_unary_rpc_method_handler(
+                    servicer.reduce_chunk,
+                    request_deserializer=server__pb2.ReduceChunk.FromString,
+                    response_serializer=server__pb2.ReceivedChunk.SerializeToString,
+            ),
+            'gather_chunk': grpc.stream_unary_rpc_method_handler(
+                    servicer.gather_chunk,
+                    request_deserializer=server__pb2.GatherChunk.FromString,
+                    response_serializer=server__pb2.ReceivedChunk.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -96,5 +128,39 @@ class CommServer(object):
         return grpc.experimental.unary_unary(request, target, '/CommServer/buffer_status',
             server__pb2.CheckBufferStatus.SerializeToString,
             server__pb2.BufferStatusReply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def reduce_chunk(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(request_iterator, target, '/CommServer/reduce_chunk',
+            server__pb2.ReduceChunk.SerializeToString,
+            server__pb2.ReceivedChunk.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def gather_chunk(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(request_iterator, target, '/CommServer/gather_chunk',
+            server__pb2.GatherChunk.SerializeToString,
+            server__pb2.ReceivedChunk.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

@@ -5,6 +5,8 @@ import "tensor.proto";
 service CommServer {
   rpc send_buffer (stream SendTensor) returns (SendTensorReply) {}
   rpc buffer_status (CheckBufferStatus) returns (BufferStatusReply) {}
+  rpc reduce_chunk (stream ReduceChunk) returns (ReceivedChunk) {}
+  rpc gather_chunk (stream GatherChunk) returns (ReceivedChunk) {}
 }
 
 message CheckBufferStatus {
@@ -14,4 +16,24 @@ message CheckBufferStatus {
 
 message BufferStatusReply {
   string status = 1;
+}
+
+message ReduceChunk {
+  int32 ring_id = 1;
+  DataChunk tensor_chunk = 3;
+}
+
+message GatherChunk {
+  int32 ring_id = 1;
+  DataChunk data_chunk = 2;
+}
+
+message DataChunk {
+  bytes buffer = 1;
+  string type = 2; //$weights or $gradients
+  int32 data_size = 3;
+}
+
+message ReceivedChunk {
+  bool reply = 1; 
 }

@@ -3,6 +3,7 @@ import asyncio
 import grpc
 import threading
 import multiprocessing as mp
+from threading import Thread
 import numpy as np
 import pickle
 import time
@@ -12,15 +13,53 @@ from server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
 from server_pb2 import CheckBufferStatus
 
 class Node():
-    def __init__(self, name=None, submod_file=None, template_path=None, local_host=None, local_port=None,forward_target_host=None, forward_target_port=None, backward_target_host=None, backward_target_port=None, model=None, optimizer=None, labels=None, test_labels=None):
+    def __init__(self, name=None, 
+                 submod_file=None, template_path=None, 
+                 local_host=None, local_port=None,
+                 forward_target_host=None, forward_target_port=None, 
+                 backward_target_host=None, backward_target_port=None, 
+                 model=None, optimizer=None, labels=None, test_labels=None,
+                 ring_ids=None, rank=None, ring_size = None, data_dict = None,
+                 param_addresses = None
+                 ):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
+        self.reduce_lock = mp.Lock()
+        self.gather_lock = mp.Lock()
         
         self.local_address = '{}:{}'.format(local_host, local_port)
         self.name = name
+
         self.load_forward_buffer = self.manager.list()
         self.load_backward_buffer = self.manager.list()
+        self.reduce_ring_buffers = self.manager.dict()
+        self.gather_ring_buffers = self.manager.dict()
+        self.ring_ids = ring_ids
+        self.rank = rank
+        self.ring_size = ring_size
+        
+        self.ring_param_keys = {}
+        self.data_dict = data_dict
+        data_dict_keys = list(data_dict.keys())
+        for i, ring in enumerate(self.ring_ids.items()):
+            if i < len(self.ring_ids) - 1:
+                keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
+            else:
+                keys = data_dict_keys[data_dict_keys.index(ring[1]):]
+            
+            self.ring_param_keys[ring[0]] = keys
+
+        self.param_addresses = {}
+        for i, param_to_address in enumerate(param_addresses.items()):
+            if i < len(param_addresses) - 1:
+                keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
+            else:
+                keys = data_dict_keys[data_dict_keys.index(ring[1]):]
+            
+            self.ring_param_keys[ring[0]] = keys
+            
+
         self.send_buffer = []
         self.model = model
         self.labels = labels
@@ -55,9 +94,14 @@ class Node():
             self.node_type = 'mid'
             self.optimizer = optimizer(current_model_params_clone(self.model))
 
-    def init_server(self, load_forward_buffer=None, load_backward_buffer=None, forward_lock=None, backward_lock=None):
+    def init_server(self, load_forward_buffer=None, load_backward_buffer=None, 
+                    reduce_ring_buffers = None, gather_ring_buffers = None, 
+                    forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None):
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        add_CommServerServicer_to_server(GrpcService(load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, forward_lock=forward_lock, backward_lock=backward_lock), self.server)
+        add_CommServerServicer_to_server(GrpcService(
+            load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, 
+            reduce_ring_buffers=reduce_ring_buffers, gather_ring_buffers=gather_ring_buffers,
+            forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, gather_lock=gather_lock), self.server)
 
 
     def grpc_server_serve(self):
@@ -477,20 +521,110 @@ class Node():
 
                 self.send_buffer = []
 
+    def parallel_ring_reduce(self, data_dict):
+        # print('\n Rank: ', rank, 'Ring ids: ', ring_ids, ' data dict: ', data_dict)
+        threads = []
+        data_dict_keys = list(data_dict.keys())
+        for ring_id, index in self.ring_ids.items():
+            # if i < len(self.ring_ids) - 1:
+            #     keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
+            # else:
+            #     keys = data_dict_keys[data_dict_keys.index(ring[1]):]
+            # # if device_name == 'c0_a':
+            # #     print('keys in rank: ', rank, ': ', keys)
+            ring_data = {k:self.data_dict[k] for k in self.ring_param_keys[ring_id]}
+            t = Thread(target=single_ring_reduce, args=(device_name, ring_data, rank, size, {k:send_qs[k] for k in keys}, {k:receive_qs[k] for k in keys}))
+            threads.append(t)
+
+        for thread in threads:
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+    def single_ring_reduce(self, device_name, data,rank, size, send_q, recv_q):
+        # if device_name == 'c0_a':
+        print('Starting thread {}'.format(device_name), 'data: ', data.keys(), device_name, send_q, recv_q)
+
+        chunked_data = create_chunks(data=data, size=size)
+        # if device_name == 'c0_a':
+
+        print('\nchunked data: ', chunked_data, device_name)
+        # # data = torch.cat(chunks)
+        # data = np.concatenate(chunks, axis=split_axis)
+        # print('Process {} has tensor (Overall view) {}'.format(rank, data))   
+
+        iterations = self.ring_size - 1
+
+        recv_pos = ((self.rank-1)+self.ring_size) % self.ring_size 
+        send_pos = (self.rank)%self.ring_size
+
+        for i in range(iterations):
+            # sent_chunks = {}
+            for id, chunks in chunked_data.items():
+                # sent_chunks[id] = chunks[send_pos]
+                send_q[id].put((id, chunks[send_pos]))
+
+            for id, chunks in chunked_data.items():
+                rid, recv_data = recv_q[id].get()
+                # print('Received in Scatter: ', device_name, ' for param id: ', rid, ' data: ', recv_data, ' should have received id: ', id, ' for pos: ', recv_pos)
+
+                chunked_data[id][recv_pos] += recv_data[:]  
+            
+            recv_pos = ((recv_pos - 1)+size)%size
+            send_pos = ((send_pos - 1)+size)%size
+
+
+        send_pos = (recv_pos+1)%size
+        recv_pos = ((send_pos - 1)+size)%size
+        # time.sleep(5)
+        for i in range(iterations):
+            for id, chunks in chunked_data.items():
+                # sent_chunks[id] = chunks[send_pos]
+                send_q[id].put((id, chunks[send_pos]))
+
+            # chunks[recv_pos] = recv_data[:]
+            for id, chunks in chunked_data.items():
+                rid, recv_data = recv_q[id].get()
+                # print('Received in Gather: ', device_name, ' for param id: ', rid, ' data: ', recv_data, ' should have received id: ', id, ' for pos: ', recv_pos)
+
+                chunked_data[id][recv_pos] = recv_data[:]    
+
+            recv_pos = ((recv_pos - 1)+size)%size
+            send_pos = ((send_pos - 1)+size)%size
+
+
+    print('Gathered, GPU {} has tensor {}'.format(device_name, chunked_data)) 
 
     def __getstate__(self):
         return dict(
             forward_lock = self.forward_lock,
             backward_lock = self.backward_lock,
-            local_address=self.local_address,
-            load_forward_buffer=self.load_forward_buffer,
-            load_backward_buffer=self.load_backward_buffer
+            reduce_lock = self.reduce_lock,
+            gather_lock = self.gather_lock,
+            local_address = self.local_address,
+            load_forward_buffer = self.load_forward_buffer,
+            load_backward_buffer = self.load_backward_buffer,
+            reduce_ring_buffers = self.reduce_ring_buffers,
+            gather_ring_buffers = self.gather_ring_buffers
         )
 
     def __setstate__(self, state):
         self.local_address = state['local_address']
         self.init_server(load_forward_buffer=state['load_forward_buffer'], 
                          load_backward_buffer=state['load_backward_buffer'], 
+                         reduce_ring_buffers= state['reduce_ring_buffers'],
+                         gather_ring_buffers= state['gather_ring_buffers'],
                          forward_lock=state['forward_lock'], 
-                         backward_lock=state['backward_lock'])
+                         backward_lock=state['backward_lock'],
+                         reduce_lock=state['reduce_lock'],
+                         gather_lock=state['gather_lock'],
+                         )
 
+def create_chunks(data, size):
+    chunked_data = {}
+    for key, val in data.items():
+        split_axis = np.argmax(val.shape)
+        chunked_data[key] = np.array_split(val, size, axis=split_axis)
+
+    return chunked_data
