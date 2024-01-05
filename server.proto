@@ -20,7 +20,7 @@ message BufferStatusReply {
 
 message ReduceChunk {
   int32 ring_id = 1;
-  DataChunk tensor_chunk = 3;
+  DataChunk data_chunk = 2;
 }
 
 message GatherChunk {

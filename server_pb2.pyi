@@ -44,9 +44,9 @@ class ReceivedChunk(_message.Message):
     def __init__(self, reply: bool = ...) -> None: ...
 
 class ReduceChunk(_message.Message):
-    __slots__ = ["ring_id", "tensor_chunk"]
+    __slots__ = ["data_chunk", "ring_id"]
+    DATA_CHUNK_FIELD_NUMBER: _ClassVar[int]
     RING_ID_FIELD_NUMBER: _ClassVar[int]
-    TENSOR_CHUNK_FIELD_NUMBER: _ClassVar[int]
+    data_chunk: DataChunk
     ring_id: int
-    tensor_chunk: DataChunk
-    def __init__(self, ring_id: _Optional[int] = ..., tensor_chunk: _Optional[_Union[DataChunk, _Mapping]] = ...) -> None: ...
+    def __init__(self, ring_id: _Optional[int] = ..., data_chunk: _Optional[_Union[DataChunk, _Mapping]] = ...) -> None: ...

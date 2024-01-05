@@ -10,6 +10,7 @@ import asyncio
 import _pickle as cPickle
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from tensor_pb2 import TensorChunk, SendTensor
+from server_pb2 import ReduceChunk, DataChunk
 
 T = TypeVar("T")
 
@@ -42,6 +43,28 @@ def generate_stream(data, type=None):
         tensor_chunk = TensorChunk(buffer=obj, type='$tensor', tensor_size=file_size)
         yield SendTensor(tensor_chunk=tensor_chunk, type=type)
         
+def generate_data_stream(data, ring_id=None, type=None):
+    if not isinstance(data, bytes):
+        obj = cPickle.dumps(data)
+    else:
+        obj = data
+    
+    file_size = len(obj)
+    blocksize = 2*1024*1024
+    if file_size > blocksize:
+        for i in range(0, file_size, blocksize):
+            data = obj[i:i+blocksize]
+            data_chunk = DataChunk(buffer=data, data_size=file_size)
+            # tensor_chunk = TensorChunk(buffer=data, type='$tensor', tensor_size=file_size)
+            # yield SendTensor(tensor_chunk=tensor_chunk, type=type)
+            yield ReduceChunk(ring_id=ring_id, data_chunk=data_chunk)
+        
+    else:
+        data_chunk = DataChunk(buffer=obj, data_size=file_size)
+        # tensor_chunk = TensorChunk(buffer=obj, type='$tensor', tensor_size=file_size)
+        # yield SendTensor(tensor_chunk=tensor_chunk, type=type)
+        print('yielding')
+        yield ReduceChunk(ring_id=ring_id, data_chunk=data_chunk)
 
 @torch.no_grad()
 def current_model_params_clone(model):
