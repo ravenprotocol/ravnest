@@ -7,16 +7,13 @@ def calculate_fitness(individual, nodes, L, t):
     clusters = {}
     for index, cluster_id in enumerate(individual):
         clusters.setdefault(cluster_id, {'ram':0, 'speed':0})
-        clusters[cluster_id]['ram'] += nodes[index]['ram']
-        clusters[cluster_id]['speed'] += nodes[index]['ram']//nodes[index]['bandwidth']
-
-    # print('clusters: ', clusters)
+        clusters[cluster_id]['ram'] += nodes[index].benchmarks['ram']
+        clusters[cluster_id]['speed'] += nodes[index].benchmarks['ram']//nodes[index].benchmarks['bandwidth']
 
     penalty_L = 0
     for cluster_spec in list(clusters.values()):
         if cluster_spec['ram'] <= L:
             penalty_L += (L - cluster_spec['ram'])
-
 
     penalty_t = 0
     speeds = []
@@ -24,13 +21,7 @@ def calculate_fitness(individual, nodes, L, t):
         speeds.append(cluster_spec['speed'])
 
     penalty_t = max(speeds) - min(speeds)
-
-    # print(penalty_L, penalty_t)
-
     penalty = 100 * penalty_L + penalty_t
-
-    # print(penalty)
-
     return penalty
 
 def select_parents(population, fitness):
@@ -57,7 +48,6 @@ def decode_solution(solution, numbers):
 
 def genetic_algorithm(nodes, L, t=0, population_size=200, max_clusters=5, generations=500, mutation_rate=0.01):    
     population = initialize_population(nodes, population_size, max_clusters)
-    # print('initial_pop: ', population)
     best_individual = None
     best_fitness = 1000000
     for generation in range(generations):
@@ -77,32 +67,4 @@ def genetic_algorithm(nodes, L, t=0, population_size=200, max_clusters=5, genera
             new_population.extend([mutate(child1, mutation_rate, max_clusters), mutate(child2, mutation_rate, max_clusters)])
         population = new_population
 
-    # print(best_individual)
     return decode_solution(best_individual, nodes)
-
-    # return decode_solution(population[fitness.index(min(fitness))], numbers)
-
-# Example usage
-ram_variants = [2,4,8,16,32,64,128]
-bandwidth_variants = [random.randint(1,40) for _ in range(10)]
-
-num_nodes = 30
-nodes = [{'ram':random.choice(ram_variants), 'bandwidth':random.choice(bandwidth_variants)} for _ in range(num_nodes)]
-print('Pool: ', nodes)
-
-L = 325
-
-final_clusters = genetic_algorithm(nodes, L)
-final_clusters = dict(sorted(final_clusters.items()))
-
-# print('\nOptimal Clusters: ', final_clusters)
-for cluster_id, cluster in final_clusters.items():
-    print('\nCluster ',cluster_id, ': ', cluster)
-    cluster_ram = 0
-    cluster_speed = 0
-    for machine in cluster:
-        cluster_ram += machine['ram']
-        cluster_speed += machine['ram'] // machine['bandwidth']
-
-    print('\nCluster Ram: ', cluster_ram, '\nCluster Speed: ', cluster_speed)
-    print('\n--------------------------------\n')
