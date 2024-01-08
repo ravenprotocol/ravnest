@@ -571,7 +571,7 @@ class Node():
             # print(address_send_data_mapping)
             send_threads = []
             for address, data_dict in address_send_data_mapping.items():
-                t = Thread(target=self.send_chunk, args=(address.split(':')[0], address.split(':')[1], data_dict, ring_id,))
+                t = Thread(target=self.send_reduce_chunk, args=(address.split(':')[0], address.split(':')[1], data_dict, ring_id,))
                 send_threads.append(t)
                 t.start()
 
@@ -616,7 +616,7 @@ class Node():
 
             send_threads = []
             for address, data_dict in address_send_data_mapping.items():
-                t = Thread(target=self.send_chunk, args=(address.split(':')[0], address.split(':')[1], data_dict, ring_id,))
+                t = Thread(target=self.send_gather_chunk, args=(address.split(':')[0], address.split(':')[1], data_dict, ring_id,))
                 send_threads.append(t)
                 t.start()
 
@@ -628,10 +628,10 @@ class Node():
                 
             keys_received = 0
             while keys_received < len(chunked_data):
-                received_data = self.reduce_ring_buffers.get(ring_id, None)
+                received_data = self.gather_ring_buffers.get(ring_id, None)
                 if received_data is not None and len(received_data)>0:
-                    print('Received from reduce buffer: ', received_data)
-                    with self.reduce_lock:
+                    print('Received from Gather buffer: ', received_data)
+                    with self.gather_lock:
                         recv_chunk = received_data.pop()
                     
                     for param_index, chunk in recv_chunk.items():
@@ -649,13 +649,20 @@ class Node():
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
 
 
-        print('Gathered, GPU {} has tensor {}'.format(chunked_data)) 
+        print('Gathered: {}'.format(chunked_data)) 
 
-    def send_chunk(self, target_host, target_port, data_dict, ring_id):
+    def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         print('target host: ', target_host, target_port)
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
             stub = CommServerStub(channel)
             response = stub.reduce_chunk(generate_data_stream(data_dict, ring_id=ring_id))
+
+    def send_gather_chunk(self, target_host, target_port, data_dict, ring_id):
+        print('target host: ', target_host, target_port)
+        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+            stub = CommServerStub(channel)
+            response = stub.gather_chunk(generate_data_stream(data_dict, ring_id=ring_id))
+
 
     def __getstate__(self):
         return dict(
