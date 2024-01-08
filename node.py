@@ -548,7 +548,7 @@ class Node():
             thread.join()
 
     def single_ring_reduce(self, ring_data, ring_id):
-        print('Starting ring reduce thread')
+        print('Starting ring reduce thread for: ', ring_id)
 
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
 
@@ -579,16 +579,17 @@ class Node():
                 t.join()
             send_threads = []
             keys_received = 0
+            print('chunked data length: ', len(chunked_data))
             while keys_received < len(chunked_data):
-                received_data = self.reduce_ring_buffers.get(ring_id, None)
-                if received_data is not None and len(received_data)>0:
-                    print('Received from reduce buffer: ', received_data)
-                    with self.reduce_lock:
+                with self.reduce_lock:
+                    received_data = self.reduce_ring_buffers.get(ring_id, None)
+                    if received_data is not None and len(received_data)>0:
+                        print('Received from reduce buffer: ', received_data)
                         recv_chunk = received_data.pop()
-                    
-                    for param_index, chunk in recv_chunk.items():
-                        chunked_data[param_index][recv_pos] += chunk[:]
-                        keys_received += 1
+                        self.reduce_ring_buffers[ring_id] = received_data
+                        for param_index, chunk in recv_chunk.items():
+                            chunked_data[param_index][recv_pos] += chunk[:]
+                            keys_received += 1
 
 
             #     if ring_id in self.reduce_ring_buffers:
@@ -600,7 +601,7 @@ class Node():
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
 
-        print('Reduced: ', chunked_data)
+        print('Ring id: ', ring_id, ' Reduced: ', chunked_data)
 
         send_pos = (recv_pos+1)%self.ring_size
         recv_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
@@ -628,15 +629,19 @@ class Node():
                 
             keys_received = 0
             while keys_received < len(chunked_data):
-                received_data = self.gather_ring_buffers.get(ring_id, None)
-                if received_data is not None and len(received_data)>0:
-                    print('Received from Gather buffer: ', received_data)
-                    with self.gather_lock:
+                with self.gather_lock:
+                    received_data = self.gather_ring_buffers.get(ring_id, None)
+                    if received_data is not None and len(received_data)>0:
+                        print('Received from Gather buffer: ', received_data)
+                        # with self.gather_lock:
+                        print('In lock node')
                         recv_chunk = received_data.pop()
-                    
-                    for param_index, chunk in recv_chunk.items():
-                        chunked_data[param_index][recv_pos] = chunk[:]
-                        keys_received += 1
+                        self.gather_ring_buffers[ring_id] = received_data
+                        
+                        for param_index, chunk in recv_chunk.items():
+                            chunked_data[param_index][recv_pos] = chunk[:]
+                            keys_received += 1
+                        print(' chunked data in gather: ', chunked_data, self.gather_ring_buffers)
 
             # chunks[recv_pos] = recv_data[:]
             # for id, chunks in chunked_data.items():
@@ -648,8 +653,7 @@ class Node():
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
 
-
-        print('Gathered: {}'.format(chunked_data)) 
+        print('Ring id: ', ring_id,'Gathered: {}'.format(chunked_data)) 
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         print('target host: ', target_host, target_port)

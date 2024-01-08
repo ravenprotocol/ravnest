@@ -100,14 +100,16 @@ class GrpcService(CommServer):
             # print('Accum buffer: ', accumulated_data_buffer, data_size)
 
         data = cPickle.loads(accumulated_data_buffer)
-        print('Data received: ', data)
+        print('Data received in reduce: ', data)
         with self.reduce_lock:
             if ring_id in self.reduce_ring_buffers:
-                self.reduce_ring_buffers[ring_id].append(data)
+                ring_buffer_data = self.reduce_ring_buffers[ring_id]
+                ring_buffer_data.append(data)
+                self.reduce_ring_buffers[ring_id] = ring_buffer_data #.append(data)
             else:
                 self.reduce_ring_buffers[ring_id] = [data]
 
-        # print(self.reduce_ring_buffers)
+        print('Reduce ring buffer in endpoints', self.reduce_ring_buffers)
 
         return ReceivedChunk(reply=True)
     
@@ -130,13 +132,17 @@ class GrpcService(CommServer):
             # print('Accum buffer: ', accumulated_data_buffer, data_size)
 
         data = cPickle.loads(accumulated_data_buffer)
-        print('Data received: ', data)
+        print('Data received in gather: ', data)
         with self.gather_lock:
-            print('In lock')
+            print('In lock endpoints')
             if ring_id in self.gather_ring_buffers:
-                self.gather_ring_buffers[ring_id].append(data)
+                ring_buffer_data = self.gather_ring_buffers[ring_id]
+                ring_buffer_data.append(data)
+                self.gather_ring_buffers[ring_id] = ring_buffer_data
+                # self.gather_ring_buffers[ring_id].append(data)
             else:
                 self.gather_ring_buffers[ring_id] = [data]
+            print('Gather buffers In lock endpoints: ', self.gather_ring_buffers)
 
         print('Gather ring buffers: ', self.gather_ring_buffers)
 
