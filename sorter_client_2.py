@@ -3,7 +3,7 @@ import numpy as np
 import random
 import time
 from sklearn import datasets
-from node import Node
+from ravnest.node import Node
 from sklearn.model_selection import train_test_split
 import pickle
 

@@ -9,8 +9,8 @@ import torch
 import asyncio
 import _pickle as cPickle
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
-from tensor_pb2 import TensorChunk, SendTensor
-from server_pb2 import ReduceChunk, DataChunk
+from protos.tensor_pb2 import TensorChunk, SendTensor
+from protos.server_pb2 import ReduceChunk, DataChunk
 
 T = TypeVar("T")
 

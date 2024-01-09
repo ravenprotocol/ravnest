@@ -1,5 +1,5 @@
 import torch
-from node import Node
+from ravnest.node import Node
 import time
 import numpy as np
 import random

@@ -1,6 +1,6 @@
-from genetic import *
-from cluster import Cluster
-from node import Node
+from cluster_node_operations.genetic import *
+from cluster_node_operations.cluster import Cluster
+from cluster_node_operations.node import Node
 import numpy as np
 import random
 import copy

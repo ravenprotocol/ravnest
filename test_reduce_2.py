@@ -1,4 +1,4 @@
-from node import Node
+from ravnest.node import Node
 import numpy as np
 import time
 

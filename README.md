@@ -9,24 +9,29 @@ Ravnest introduces a novel asynchronous parallel training approach that combines
 Compile the protobufs:
 
 ```bash
-python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. ./*.proto
+python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. protos/*.proto
 ```
 
 Generate the submodel files:
 
 ```bash
-python split_model.py
+python sorter/split_model.py
 ```
 
 Order of Execution of Clients (in 3 terminals):
 ```bash
-python client_2.py
+python sorter_client_2.py
 ```
 ```bash
-python client_1.py
+python sorter_client_1.py
 ```
 ```bash
-python client_0.py
+python sorter_client_0.py
+```
+
+To run infernce on test input:
+```bash
+python sorter_inference.py
 ```
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import time
 from sklearn import datasets
-from node import Node
+from ravnest.node import Node
 from sklearn.model_selection import train_test_split
 import time
 

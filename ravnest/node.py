@@ -7,10 +7,11 @@ from threading import Thread
 import numpy as np
 import pickle
 import time
-from utils import *
-from endpoints import GrpcService
-from server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
-from server_pb2 import CheckBufferStatus
+from ravnest.utils import *
+from ravnest.endpoints import GrpcService
+
+from protos.server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
+from protos.server_pb2 import CheckBufferStatus
 
 class Node():
     def __init__(self, name=None, 

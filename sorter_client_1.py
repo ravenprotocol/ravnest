@@ -1,6 +1,6 @@
 import torch
 import time
-from node import Node
+from ravnest.node import Node
 
 host = '0.0.0.0'
 port = 8081
