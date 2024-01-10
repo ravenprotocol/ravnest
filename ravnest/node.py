@@ -589,8 +589,9 @@ class Node():
                         print('Recv chunk in node: ', recv_chunk)
                         self.reduce_ring_buffers[ring_id] = received_data
                         for param_index, chunk_dict in recv_chunk.items():
-                            print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['data'].shape)
-                            chunked_data[param_index][recv_pos] += chunk_dict['data'][:]
+                            print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['chunk'].shape)
+                            # chunked_data[param_index][recv_pos] += chunk_dict['chunk'][:]
+                            chunked_data[param_index][chunk_dict['pos']] += chunk_dict['chunk'][:]
                             keys_received += 1 
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -605,10 +606,15 @@ class Node():
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
+                # if dest in address_send_data_mapping:
+                #     address_send_data_mapping[dest][id] = chunks[send_pos]
+                # else:
+                #     address_send_data_mapping[dest] = {id:chunks[send_pos]}
+
                 if dest in address_send_data_mapping:
-                    address_send_data_mapping[dest][id] = chunks[send_pos]
+                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks[send_pos]}
                 else:
-                    address_send_data_mapping[dest] = {id:chunks[send_pos]}
+                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks[send_pos]}}
 
             send_threads = []
             for address, data_dict in address_send_data_mapping.items():
@@ -629,8 +635,9 @@ class Node():
                         # print('Recv chunk in node: ', recv_chunk)
                         self.gather_ring_buffers[ring_id] = received_data
                         
-                        for param_index, chunk in recv_chunk.items():
-                            chunked_data[param_index][recv_pos] = chunk[:]
+                        for param_index, chunk_dict in recv_chunk.items():
+                            # chunked_data[param_index][recv_pos] = chunk[:]
+                            chunked_data[param_index][chunk_dict['pos']] = chunk_dict['chunk'][:]
                             keys_received += 1
 
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
