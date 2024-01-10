@@ -14,10 +14,10 @@ from protos.server_pb2_grpc import add_CommServerServicer_to_server, CommServerS
 from protos.server_pb2 import CheckBufferStatus
 
 class Node():
-    def __init__(self, name=None, 
-                 submod_file=None, template_path=None, 
+    def __init__(self, name=None,
+                 submod_file=None, template_path=None,
                  local_host=None, local_port=None,
-                 forward_target_host=None, forward_target_port=None, 
+                 forward_target_host=None, forward_target_port=None,
                  backward_target_host=None, backward_target_port=None, 
                  model=None, optimizer=None, labels=None, test_labels=None,
                  ring_ids=None, rank=None, ring_size = None, data_dict = None,
@@ -28,7 +28,7 @@ class Node():
         self.backward_lock = mp.Lock()
         self.reduce_lock = mp.Lock()
         self.gather_lock = mp.Lock()
-        
+
         self.local_address = '{}:{}'.format(local_host, local_port)
         self.name = name
 
@@ -44,6 +44,7 @@ class Node():
         self.data_dict = data_dict
         if data_dict is not None:
             data_dict_keys = list(data_dict.keys())
+            print('ring ids: ', self.ring_ids)
             for i, ring in enumerate(self.ring_ids.items()):
                 if i < len(self.ring_ids) - 1:
                     keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
@@ -532,14 +533,8 @@ class Node():
         threads = []
         # data_dict_keys = list(data_dict.keys())
         for ring_id, index in self.ring_ids.items():
-            # if i < len(self.ring_ids) - 1:
-            #     keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
-            # else:
-            #     keys = data_dict_keys[data_dict_keys.index(ring[1]):]
-            # # if device_name == 'c0_a':
-            # #     print('keys in rank: ', rank, ': ', keys)
             ring_data = {k:self.data_dict[k] for k in self.ring_param_keys[ring_id]}
-            t = Thread(target=self.single_ring_reduce, args=(ring_data,ring_id,))#, args=(device_name, ring_data, rank, size, {k:send_qs[k] for k in keys}, {k:receive_qs[k] for k in keys}))
+            t = Thread(target=self.single_ring_reduce, args=(ring_data,ring_id,))
             threads.append(t)
 
         for thread in threads:
@@ -549,11 +544,11 @@ class Node():
             thread.join()
 
     def single_ring_reduce(self, ring_data, ring_id):
-        print('Starting ring reduce thread for: ', ring_id)
+        # print('Starting ring reduce thread for: ', ring_id)
 
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
 
-        print('\nchunked data: ', chunked_data)  
+        # print('\nchunked data: ', chunked_data)  
 
         iterations = self.ring_size - 1
 
@@ -580,24 +575,17 @@ class Node():
                 t.join()
             send_threads = []
             keys_received = 0
-            print('chunked data length: ', len(chunked_data))
+            # print('chunked data length: ', len(chunked_data))
             while keys_received < len(chunked_data):
                 with self.reduce_lock:
                     received_data = self.reduce_ring_buffers.get(ring_id, None)
                     if received_data is not None and len(received_data)>0:
-                        print('Received from reduce buffer: ', received_data)
+                        # print('Received from reduce buffer: ', received_data)
                         recv_chunk = received_data.pop()
                         self.reduce_ring_buffers[ring_id] = received_data
                         for param_index, chunk in recv_chunk.items():
                             chunked_data[param_index][recv_pos] += chunk[:]
-                            keys_received += 1
-
-
-            #     if ring_id in self.reduce_ring_buffers:
-            #         if len()
-            # for id, chunks in chunked_data.items():
-            #     rid, recv_data = recv_q[id].get()
-            #     chunked_data[id][recv_pos] += recv_data[:]  
+                            keys_received += 1 
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
@@ -624,32 +612,18 @@ class Node():
 
             for t in send_threads:
                 t.join()
-            # for id, chunks in chunked_data.items():
-            #     # sent_chunks[id] = chunks[send_pos]
-            #     send_q[id].put((id, chunks[send_pos]))
                 
             keys_received = 0
             while keys_received < len(chunked_data):
                 with self.gather_lock:
                     received_data = self.gather_ring_buffers.get(ring_id, None)
                     if received_data is not None and len(received_data)>0:
-                        print('Received from Gather buffer: ', received_data)
-                        # with self.gather_lock:
-                        print('In lock node')
                         recv_chunk = received_data.pop()
                         self.gather_ring_buffers[ring_id] = received_data
                         
                         for param_index, chunk in recv_chunk.items():
                             chunked_data[param_index][recv_pos] = chunk[:]
                             keys_received += 1
-                        print(' chunked data in gather: ', chunked_data, self.gather_ring_buffers)
-
-            # chunks[recv_pos] = recv_data[:]
-            # for id, chunks in chunked_data.items():
-            #     rid, recv_data = recv_q[id].get()
-            #     # print('Received in Gather: ', device_name, ' for param id: ', rid, ' data: ', recv_data, ' should have received id: ', id, ' for pos: ', recv_pos)
-
-            #     chunked_data[id][recv_pos] = recv_data[:]    
 
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
