@@ -548,21 +548,25 @@ class Node():
 
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
 
-        # print('\nchunked data: ', chunked_data)  
+        for param, c in chunked_data.items():
+            print('p: ', param)
+            for ch in c:
+                print(' chunk shape', ch.shape)
 
         iterations = self.ring_size - 1
 
         recv_pos = ((self.rank-1)+self.ring_size) % self.ring_size 
         send_pos = (self.rank)%self.ring_size
-
+        print('send pos: ', send_pos)
         for i in range(iterations):
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
+                print(' Dest: ', dest, ' send pos: ', send_pos, ' chunk: ', chunks[send_pos].shape)
                 if dest in address_send_data_mapping:
-                    address_send_data_mapping[dest][id] = chunks[send_pos]
+                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks[send_pos]}
                 else:
-                    address_send_data_mapping[dest] = {id:chunks[send_pos]}
+                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks[send_pos]}}
             
             # print(address_send_data_mapping)
             send_threads = []
@@ -580,11 +584,13 @@ class Node():
                 with self.reduce_lock:
                     received_data = self.reduce_ring_buffers.get(ring_id, None)
                     if received_data is not None and len(received_data)>0:
-                        # print('Received from reduce buffer: ', received_data)
-                        recv_chunk = received_data.pop()
+                        print('Received from reduce buffer: ', received_data)
+                        recv_chunk = received_data.pop(0)
+                        print('Recv chunk in node: ', recv_chunk)
                         self.reduce_ring_buffers[ring_id] = received_data
-                        for param_index, chunk in recv_chunk.items():
-                            chunked_data[param_index][recv_pos] += chunk[:]
+                        for param_index, chunk_dict in recv_chunk.items():
+                            print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['data'].shape)
+                            chunked_data[param_index][recv_pos] += chunk_dict['data'][:]
                             keys_received += 1 
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -618,7 +624,9 @@ class Node():
                 with self.gather_lock:
                     received_data = self.gather_ring_buffers.get(ring_id, None)
                     if received_data is not None and len(received_data)>0:
-                        recv_chunk = received_data.pop()
+                        # print('Received data in node: ', received_data)
+                        recv_chunk = received_data.pop(0)
+                        # print('Recv chunk in node: ', recv_chunk)
                         self.gather_ring_buffers[ring_id] = received_data
                         
                         for param_index, chunk in recv_chunk.items():
