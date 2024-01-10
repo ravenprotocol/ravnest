@@ -11,7 +11,7 @@ from ravnest.utils import *
 from ravnest.endpoints import GrpcService
 
 from protos.server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
-from protos.server_pb2 import CheckBufferStatus
+from protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration
 
 class Node():
     def __init__(self, name=None,
@@ -36,7 +36,15 @@ class Node():
         self.load_backward_buffer = self.manager.list()
         self.reduce_ring_buffers = self.manager.dict()
         self.gather_ring_buffers = self.manager.dict()
+        self.reduce_iteration = self.manager.dict()
+        self.gather_iteration = self.manager.dict()
+
         self.ring_ids = ring_ids
+
+        for ring_id, _ in self.ring_ids.items():
+            self.reduce_iteration[ring_id] = 0
+            self.gather_iteration[ring_id] = 0
+
         self.rank = rank
         self.ring_size = ring_size
         
@@ -100,12 +108,14 @@ class Node():
 
     def init_server(self, load_forward_buffer=None, load_backward_buffer=None, 
                     reduce_ring_buffers = None, gather_ring_buffers = None, 
-                    forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None):
+                    forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None,
+                    reduce_iteration = None, gather_iteration = None):
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
         add_CommServerServicer_to_server(GrpcService(
             load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, 
             reduce_ring_buffers=reduce_ring_buffers, gather_ring_buffers=gather_ring_buffers,
-            forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, gather_lock=gather_lock), self.server)
+            forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, gather_lock=gather_lock,
+            reduce_iteration = reduce_iteration, gather_iteration = gather_iteration), self.server)
         print('Length of forward buffer: ', len(load_backward_buffer), os.getpid())
 
 
@@ -557,12 +567,12 @@ class Node():
 
         recv_pos = ((self.rank-1)+self.ring_size) % self.ring_size 
         send_pos = (self.rank)%self.ring_size
-        print('send pos: ', send_pos)
+        # print('send pos: ', send_pos)
         for i in range(iterations):
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
-                print(' Dest: ', dest, ' send pos: ', send_pos, ' chunk: ', chunks[send_pos].shape)
+                # print(' Dest: ', dest, ' send pos: ', send_pos, ' chunk: ', chunks[send_pos].shape)
                 if dest in address_send_data_mapping:
                     address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks[send_pos]}
                 else:
@@ -584,20 +594,22 @@ class Node():
                 with self.reduce_lock:
                     received_data = self.reduce_ring_buffers.get(ring_id, None)
                     if received_data is not None and len(received_data)>0:
-                        print('Received from reduce buffer: ', received_data)
+                        # print('Received from reduce buffer: ', received_data)
                         recv_chunk = received_data.pop(0)
-                        print('Recv chunk in node: ', recv_chunk)
+                        # print('Recv chunk in node: ', recv_chunk)
                         self.reduce_ring_buffers[ring_id] = received_data
                         for param_index, chunk_dict in recv_chunk.items():
-                            print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['chunk'].shape)
+                            # print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['chunk'].shape)
                             # chunked_data[param_index][recv_pos] += chunk_dict['chunk'][:]
                             chunked_data[param_index][chunk_dict['pos']] += chunk_dict['chunk'][:]
                             keys_received += 1 
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
+            self.reduce_iteration[ring_id] += 1
 
-        print('Ring id: ', ring_id, ' Reduced: ', chunked_data)
+        self.reduce_iteration[ring_id] = 0
+        print('Ring id: ', ring_id, ' Reduced: ', chunked_data, ' reduce iteration reset: ', self.reduce_iteration[ring_id])
 
         send_pos = (recv_pos+1)%self.ring_size
         recv_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
@@ -642,19 +654,29 @@ class Node():
 
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
+            self.gather_iteration[ring_id] += 1
 
+        self.gather_iteration[ring_id] = 0
         print('Ring id: ', ring_id,'Gathered: {}'.format(chunked_data)) 
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         print('target host: ', target_host, target_port)
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
             stub = CommServerStub(channel)
+            while True:
+                iteration_resp = stub.reduce_iteration(CheckReduceIteration(ring_id=ring_id))
+                if iteration_resp.iteration == self.reduce_iteration[ring_id]:
+                    break
             response = stub.reduce_chunk(generate_data_stream(data_dict, ring_id=ring_id))
 
     def send_gather_chunk(self, target_host, target_port, data_dict, ring_id):
         print('target host: ', target_host, target_port)
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
             stub = CommServerStub(channel)
+            while True:
+                iteration_resp = stub.gather_iteration(CheckGatherIteration(ring_id=ring_id))
+                if iteration_resp.iteration == self.gather_iteration[ring_id]:
+                    break
             response = stub.gather_chunk(generate_data_stream(data_dict, ring_id=ring_id))
 
 
@@ -668,7 +690,9 @@ class Node():
             load_forward_buffer = self.load_forward_buffer,
             load_backward_buffer = self.load_backward_buffer,
             reduce_ring_buffers = self.reduce_ring_buffers,
-            gather_ring_buffers = self.gather_ring_buffers
+            gather_ring_buffers = self.gather_ring_buffers,
+            reduce_iteration = self.reduce_iteration,
+            gather_iteration = self.gather_iteration
         )
 
     def __setstate__(self, state):
@@ -681,6 +705,8 @@ class Node():
                          backward_lock=state['backward_lock'],
                          reduce_lock=state['reduce_lock'],
                          gather_lock=state['gather_lock'],
+                         reduce_iteration = state['reduce_iteration'],
+                         gather_iteration = state['gather_iteration']
                          )
 
 def create_chunks(data, size):

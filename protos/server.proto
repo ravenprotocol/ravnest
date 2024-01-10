@@ -7,6 +7,8 @@ service CommServer {
   rpc buffer_status (CheckBufferStatus) returns (BufferStatusReply) {}
   rpc reduce_chunk (stream ReduceChunk) returns (ReceivedChunk) {}
   rpc gather_chunk (stream GatherChunk) returns (ReceivedChunk) {}
+  rpc reduce_iteration (CheckReduceIteration) returns (ReduceIterationReply) {}
+  rpc gather_iteration (CheckGatherIteration) returns (GatherIterationReply) {}
 }
 
 message CheckBufferStatus {
@@ -36,4 +38,20 @@ message DataChunk {
 
 message ReceivedChunk {
   bool reply = 1; 
+}
+
+message CheckReduceIteration {
+  int32 ring_id = 1;
+}
+
+message ReduceIterationReply {
+  int32 iteration = 1;
+}
+
+message CheckGatherIteration {
+  int32 ring_id = 1;
+}
+
+message GatherIterationReply {
+  int32 iteration = 1;
 }

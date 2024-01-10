@@ -1,5 +1,5 @@
 from protos.server_pb2_grpc import CommServer
-from protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk
+from protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk, CheckReduceIteration, CheckGatherIteration, ReduceIterationReply, GatherIterationReply
 from protos.tensor_pb2 import SendTensor, SendTensorReply
 
 import multiprocessing as mp
@@ -12,7 +12,9 @@ class GrpcService(CommServer):
                  load_backward_buffer=None, 
                  forward_lock=None, backward_lock=None, 
                  reduce_ring_buffers = None, gather_ring_buffers=None,
-                 reduce_lock=None, gather_lock=None):
+                 reduce_lock=None, gather_lock=None, 
+                 reduce_iteration = None, gather_iteration = None
+                 ):
         super().__init__()
         self.load_forward_buffer = load_forward_buffer
         self.load_backward_buffer = load_backward_buffer
@@ -24,6 +26,8 @@ class GrpcService(CommServer):
         self.backward_id_queue = []
         self.reduce_ring_buffers = reduce_ring_buffers
         self.gather_ring_buffers = gather_ring_buffers
+        self.reduce_iteration_manager = reduce_iteration
+        self.gather_iteration_manager = gather_iteration
         
     def send_buffer(self, request: SendTensor, context) -> SendTensorReply:
        
@@ -81,6 +85,12 @@ class GrpcService(CommServer):
                 return BufferStatusReply(status='send_buffer')
 
         return BufferStatusReply(status='wait')
+    
+    def reduce_iteration(self, request:CheckReduceIteration, context) -> ReduceIterationReply:
+        return ReduceIterationReply(iteration=self.reduce_iteration_manager[request.ring_id])
+    
+    def gather_iteration(self, request:CheckGatherIteration, context) -> GatherIterationReply:
+        return GatherIterationReply(iteration=self.gather_iteration_manager[request.ring_id])
 
     def reduce_chunk(self, request:ReduceChunk, context) -> ReceivedChunk:
         size_accumulated_data_buffer = 0
