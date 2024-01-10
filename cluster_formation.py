@@ -9,14 +9,11 @@ bandwidth_variants = [random.randint(1,40) for _ in range(10)]
 num_nodes = 20
 full_model_size = 25 #gb
 
-
-node_pool = spawn_node_pool(num_nodes=num_nodes, ram_variants=ram_variants, bandwidth_variants=bandwidth_variants)
-cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool)
-
-
-form_rings(cluster_pool=cluster_pool)
-
-whom_to_connect_with(cluster_pool=cluster_pool)
+node_pool, cluster_pool, formed_rings, assigned_connection_targets = configure_clusters(max_attempts=5, 
+                                                                                            num_nodes=num_nodes,
+                                                                                            full_model_size=full_model_size, 
+                                                                                            ram_variants=ram_variants, 
+                                                                                            bandwidth_variants=bandwidth_variants)
 
 view_individual_cluster_details(cluster_pool=cluster_pool)
 

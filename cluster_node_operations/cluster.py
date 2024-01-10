@@ -28,6 +28,10 @@ class Cluster:
             q += 1
 
     def __repr__(self):
-        return "Cluster({}) with Nodes: {} | Inter-Cluster Address Map: {}".format(self.cluster_id, 
-                                                   list(self.nodes.keys()),
-                                                   self.inter_cluster_node_address_mappings)
+
+        return "\nxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nCluster({})\nNodes:{}  \nICAM:{} \nRIDM:{}".format(self.cluster_id,
+                                                list(self.nodes.keys()),
+                                                self.inter_cluster_node_address_mappings,
+                                                self.ring_id_mapping
+                                      )
+                                      

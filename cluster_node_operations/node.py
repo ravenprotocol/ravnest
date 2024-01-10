@@ -13,11 +13,11 @@ class Node:
         self.cluster = cluster
 
     def __repr__(self):
-        return "Node({}, Cluster({}), self.IP({}), IP Address to Param Mapping({}))".format(self.node_id,
-                                                            self.cluster.cluster_id if self.cluster else 'None', 
-                                                            self.ip_address,                                            
-                                                            self.next_cluster_target_node_ip_to_param_mapping)
-        
+        return "\nNode({}, Cluster({})) \nself.IP({}) \nIPAdd2ParamMapping({}) \nRID2ParamMapping({})".format(self.node_id,
+                                                                                                        self.cluster.cluster_id if self.cluster else 'None', 
+                                                                                                        self.ip_address,                                            
+                                                                                                        self.next_cluster_target_node_ip_to_param_mapping,
+                                                                                                        self.ring_id_to_param_mapping)
 
         # return "Node({}, Cluster({}), IP Address({}), Benchmarks({}), Split_Quota({}), RingID to Param Mapping: {})".format(self.node_id,
         #                                                                       self.cluster.cluster_id if self.cluster else 'None', 

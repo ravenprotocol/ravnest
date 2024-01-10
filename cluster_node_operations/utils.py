@@ -16,6 +16,23 @@ def spawn_node_pool(num_nodes, ram_variants, bandwidth_variants):
         node_pool.append(node)
     return node_pool
 
+def configure_clusters(max_attempts=5, num_nodes=None, full_model_size=None, ram_variants=None, bandwidth_variants=None):
+    for attempt in range(max_attempts):
+        try:
+            node_pool = spawn_node_pool(num_nodes=num_nodes, ram_variants=ram_variants, bandwidth_variants=bandwidth_variants)
+            cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool)
+            formed_rings = form_rings(cluster_pool=cluster_pool)
+            assigned_connection_targets = assign_connection_targets(cluster_pool=cluster_pool)
+
+            if assigned_connection_targets is not None:  # Check if the function converged
+                return node_pool, cluster_pool, formed_rings, assigned_connection_targets
+        except Exception as e:
+            print(f"An error occurred: {e}. Retrying...")
+            # Optional: Handle specific exceptions if needed
+    print(f"Failed to converge after {max_attempts} attempts.")
+    return None  # or handle this case as needed
+
+
 def cluster_formation(full_model_size, node_pool):
     prelim_clusters = genetic_algorithm(node_pool, full_model_size)
     prelim_clusters = dict(sorted(prelim_clusters.items()))
@@ -75,11 +92,10 @@ def calculate_split_percentages(cluster, full_model_size):
 def view_individual_cluster_details(cluster_pool):
     print('\n')
     for cluster in cluster_pool:
-        print('Cluster_ID: {}  | splits: {} | RAM: {} | Speed: {} | RingID Mapping: {}'.format(cluster.cluster_id,  
+        print('Cluster_ID: {}  | splits: {} | RAM: {} | Speed: {}'.format(cluster.cluster_id,  
                                                             cluster.splits,
                                                             cluster.total_ram,
-                                                            cluster.total_speed,
-                                                            cluster.ring_id_mapping
+                                                            cluster.total_speed
                                                             ))
         
 def form_rings(cluster_pool):
@@ -130,7 +146,7 @@ def form_rings(cluster_pool):
         
     return 
 
-def whom_to_connect_with(cluster_pool):
+def assign_connection_targets(cluster_pool):
     temp_splits = [cluster.splits for cluster in cluster_pool]
     splits = copy.deepcopy(temp_splits)
     copy_splits = copy.deepcopy(splits)
@@ -142,7 +158,6 @@ def whom_to_connect_with(cluster_pool):
             continuous_mapping, _ = representation_converter(cluster_split=copy_splits[cl + 1],target_split=copy_splits[cl])
         cluster_pool[cl].inter_cluster_node_address_mappings = continuous_mapping
                 
-
     for cl in range(len(cluster_pool)):
         current_cluster = cluster_pool[cl]
         if cl == len(cluster_pool) - 1:
@@ -165,6 +180,7 @@ def whom_to_connect_with(cluster_pool):
         cluster_ip_map = current_cluster.inter_cluster_node_address_mappings
         for nid, node in current_cluster.nodes.items():
             node.next_cluster_target_node_ip_to_param_mapping = cluster_ip_map[list(current_cluster.nodes.keys()).index(nid)]
+    return True
 
 def representation_converter(cluster_split, target_split):    
     # out = []
