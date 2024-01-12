@@ -14,3 +14,10 @@ class ActionTypes(object):
 
 class BufferStatus(object):
     SEND_BUFFER = "send_buffer"
+
+class NodeStatus(object):
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    REDUCING = "reducing"
+    GATHERING = "gathering"
+    IDLE = "idle"

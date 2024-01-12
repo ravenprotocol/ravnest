@@ -42,11 +42,12 @@ class Node():
         self.reduce_iteration = self.manager.dict()
         self.gather_iteration = self.manager.dict()
 
-        self.ring_ids = ring_ids
+        if ring_ids is not None:
+            self.ring_ids = ring_ids
 
-        for ring_id, _ in self.ring_ids.items():
-            self.reduce_iteration[ring_id] = 0
-            self.gather_iteration[ring_id] = 0
+            for ring_id, _ in self.ring_ids.items():
+                self.reduce_iteration[ring_id] = 0
+                self.gather_iteration[ring_id] = 0
 
         self.rank = rank
         self.ring_size = ring_size
@@ -74,7 +75,7 @@ class Node():
                 for param_name in keys:
                     self.param_address_mapping[param_name] = address_to_param[0]
 
-        self.send_buffer = []
+        # self.send_buffer = []
         self.labels = labels
         self.test_labels = test_labels
         self.forward_target_host = forward_target_host
@@ -90,6 +91,7 @@ class Node():
         self.reduce_threshold = 4
 
         self.submod_file = submod_file
+        self.node_status = NodeStatus.IDLE
 
         if submod_file is not None:
             with open('{}/{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
@@ -145,6 +147,7 @@ class Node():
         while True:
             # print('Backward: ', len(self.load_backward_buffer))
             # print('Forward: ', len(self.load_forward_buffer))
+            send_trigger_threads = []
             if len(self.load_backward_buffer) != 0:
                 self.backward_lock.acquire(block=True)
                 value = self.load_backward_buffer[0]
@@ -153,6 +156,7 @@ class Node():
                 action = value['action']
 
                 if action == ActionTypes.BACKWARD:
+                    self.node_status = NodeStatus.BACKWARD
                     gradient_dict = value['data']
                     forward_pass_id = value['forward_pass_id']
                     
@@ -175,12 +179,18 @@ class Node():
 
                     if self.node_type != NodeTypes.ROOT:
                         gradients = self.create_backward_payload(forward_pass_id=forward_pass_id)
-                        self.send_buffer.append({'action':ActionTypes.BACKWARD,
-                                                'forward_pass_id':forward_pass_id, 
-                                                'data':gradients, 
-                                                })
-
-                        self.trigger_send(type=ActionTypes.BACKWARD, target_host=self.backward_target_host, target_port=self.backward_target_port)
+                        # self.send_buffer.append({'action':ActionTypes.BACKWARD,
+                        #                         'forward_pass_id':forward_pass_id, 
+                        #                         'data':gradients, 
+                        #                         })
+                        sent_data = {'action':ActionTypes.BACKWARD,
+                                    'forward_pass_id':forward_pass_id, 
+                                    'data':gradients, 
+                                    }
+                        t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+                        send_trigger_threads.append(t)
+                        t.start()
+                        # self.trigger_send(type=ActionTypes.BACKWARD, target_host=self.backward_target_host, target_port=self.backward_target_port)
                     
                     if self.input_tensors.get(forward_pass_id, None) is not None:
                         del self.input_tensors[forward_pass_id]
@@ -188,8 +198,10 @@ class Node():
                     print('Backward done')
                     self.n_backwards += 1
 
-                    if self.n_backwards % self.reduce_threshold == 0:
-                        self.parallel_ring_reduce()
+                    # if self.n_backwards % self.reduce_threshold == 0:
+                    #     self.parallel_ring_reduce()
+
+            self.node_status = NodeStatus.IDLE
 
             if len(self.load_forward_buffer) != 0:
                 self.forward_lock.acquire(block=True)
@@ -199,6 +211,7 @@ class Node():
                 action = value['action']
                 
                 if action == ActionTypes.FORWARD:
+                    self.node_status = NodeStatus.FORWARD
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
                     model_args = self.create_model_args(data, forward_pass_id=forward_pass_id)
@@ -216,16 +229,25 @@ class Node():
                     final_payload = data
                     final_payload[self.submod_file] = payload
 
-                    self.send_buffer.append({'data_id':value['data_id'],
-                                            'forward_pass_id':forward_pass_id,
-                                            'data': final_payload,
-                                            'input_size': value['input_size'],
-                                            'action': ActionTypes.FIND_LOSS})
-                    
-                    self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+                    # self.send_buffer.append({'data_id':value['data_id'],
+                    #                         'forward_pass_id':forward_pass_id,
+                    #                         'data': final_payload,
+                    #                         'input_size': value['input_size'],
+                    #                         'action': ActionTypes.FIND_LOSS})
+                    sent_data = {'data_id':value['data_id'],
+                                'forward_pass_id':forward_pass_id,
+                                'data': final_payload,
+                                'input_size': value['input_size'],
+                                'action': ActionTypes.FIND_LOSS}
+                    t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+                    send_trigger_threads.append(t)
+                    t.start()
+
+                    # self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
                     print('Forward Done')
 
                 elif action == ActionTypes.FIND_LOSS:
+                    self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
                     targets = self.labels[data_id:data_id+value['input_size']]
                     
@@ -241,8 +263,8 @@ class Node():
 
                     outputs = self.model(*model_args.values())
 
-                    # loss = torch.nn.functional.mse_loss(outputs, targets)
-                    loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+                    loss = torch.nn.functional.mse_loss(outputs, targets)
+                    # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
 
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
@@ -253,18 +275,27 @@ class Node():
 
                     # print('shape of gradients: ', gradients.shape, value['tensor_id'])
 
-                    self.send_buffer.append({'action':ActionTypes.BACKWARD, 
-                                             'data':gradients, 
-                                             'forward_pass_id':value['forward_pass_id'],
-                                             })
-                    self.trigger_send(type=ActionTypes.BACKWARD, target_host=self.backward_target_host, target_port=self.backward_target_port)
+                    # self.send_buffer.append({'action':ActionTypes.BACKWARD, 
+                    #                          'data':gradients, 
+                    #                          'forward_pass_id':value['forward_pass_id'],
+                    #                          })
+                    sent_data = {'action':ActionTypes.BACKWARD, 
+                                'data':gradients, 
+                                'forward_pass_id':value['forward_pass_id'],
+                                }
+                    t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+                    send_trigger_threads.append(t)
+                    t.start()
+
+                    # self.trigger_send(type=ActionTypes.BACKWARD, target_host=self.backward_target_host, target_port=self.backward_target_port)
                     print('Find loss done')
                     self.n_backwards += 1
 
-                    if self.n_backwards % self.reduce_threshold == 0:
-                        self.parallel_ring_reduce()
+                    # if self.n_backwards % self.reduce_threshold == 0:
+                    #     self.parallel_ring_reduce()
 
                 elif action == ActionTypes.NO_GRAD_FORWARD:
+                    self.node_status = NodeStatus.FORWARD
                     print('No grad forward')
                     data = value['data']
                     model_args = self.create_no_grad_model_args(data)
@@ -277,12 +308,19 @@ class Node():
                     final_payload = data
                     final_payload[self.submod_file] = payload
 
-                    self.send_buffer.append({
-                                            'data': final_payload,
-                                            'action': value['output_type']                                            
-                                            })
+                    # self.send_buffer.append({
+                    #                         'data': final_payload,
+                    #                         'action': value['output_type']                                            
+                    #                         })
+                    sent_data = {
+                                    'data': final_payload,
+                                    'action': value['output_type']                                            
+                                }
+                    t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+                    send_trigger_threads.append(t)
+                    t.start()
 
-                    self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+                    # self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
 
                 elif action == ActionTypes.ACCURACY:
                     print('Finding accuracy')
@@ -310,13 +348,21 @@ class Node():
                     script = torch.jit.script(self.model)
                     script.save('trained_submodels/{}.pt'.format(self.submod_file))
                     if self.node_type != NodeTypes.LEAF:
-                        self.send_buffer.append({'action': ActionTypes.SAVE_SUBMODEL})
-                        self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+                        # self.send_buffer.append({'action': ActionTypes.SAVE_SUBMODEL})
+                        t = Thread(target=self.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+                        send_trigger_threads.append(t)
+                        t.start()
+                        # self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
                     print('SAVE done')
+
+            if len(send_trigger_threads)>0:
+                for send_threads in send_trigger_threads:
+                    send_threads.join()
+            self.node_status = NodeStatus.IDLE
                         
 
     def forward_compute(self, data_id=None, tensors=None):
-        
+        self.node_status = NodeStatus.FORWARD
         if not self.model.training:
             self.model.train()
 
@@ -329,19 +375,26 @@ class Node():
         final_payload = {}
         final_payload[self.submod_file] = payload
 
-        self.send_buffer.append({'data_id':data_id,
-                                 'forward_pass_id':self.forward_pass_id,
-                                'data': final_payload,
-                                'input_size': tensors.shape[0],
-                                'action': ActionTypes.FORWARD})
-
+        # self.send_buffer.append({'data_id':data_id,
+        #                          'forward_pass_id':self.forward_pass_id,
+        #                         'data': final_payload,
+        #                         'input_size': tensors.shape[0],
+        #                         'action': ActionTypes.FORWARD})
+        sent_data = {'data_id':data_id,
+                    'forward_pass_id':self.forward_pass_id,
+                    'data': final_payload,
+                    'input_size': tensors.shape[0],
+                    'action': ActionTypes.FORWARD}
+        
         self.forward_pass_id += 1
-        self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        self.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('Forward compute done for: ', self.tensor_id)
+        self.node_status = NodeStatus.IDLE
+
         
 
     def no_grad_forward_compute(self, tensors=None, output_type=None):
-
+        self.node_status = NodeStatus.FORWARD
         self.model.eval()
         with torch.no_grad():
             output = self.model(tensors)
@@ -351,14 +404,19 @@ class Node():
         final_payload = {}
         final_payload[self.submod_file] = payload
 
-        self.send_buffer.append({
-                                'data': final_payload,
-                                'action': ActionTypes.NO_GRAD_FORWARD,
-                                'output_type': output_type
-                                })
-
-        self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        # self.send_buffer.append({
+        #                         'data': final_payload,
+        #                         'action': ActionTypes.NO_GRAD_FORWARD,
+        #                         'output_type': output_type
+        #                         })
+        sent_data = {
+                        'data': final_payload,
+                        'action': ActionTypes.NO_GRAD_FORWARD,
+                        'output_type': output_type
+                    }
+        self.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('No Grad forward compute done')
+        self.node_status = NodeStatus.IDLE
 
               
     def create_model_args(self, data, forward_pass_id=None):
@@ -526,27 +584,42 @@ class Node():
     def trigger_save_submodel(self):
         script = torch.jit.script(self.model)
         script.save('trained_submodels/{}.pt'.format(self.submod_file))
-        self.send_buffer.append({'action': ActionTypes.SAVE_SUBMODEL})
-        self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        # self.send_buffer.append({'action': ActionTypes.SAVE_SUBMODEL})
+        self.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('SAVE done')
 
-    def trigger_send(self, type=None, target_host=None, target_port=None):
+    # def trigger_send(self, type=None, target_host=None, target_port=None):
 
-        if len(self.send_buffer) > 0:
-            with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
-                stub = CommServerStub(channel)
+    #     if len(self.send_buffer) > 0:
+    #         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+    #             stub = CommServerStub(channel)
 
-                send_flag = False
-                while not send_flag:
-                    buffer_status = stub.buffer_status(CheckBufferStatus(name=self.name, type=type))
+    #             send_flag = False
+    #             while not send_flag:
+    #                 buffer_status = stub.buffer_status(CheckBufferStatus(name=self.name, type=type))
                     
-                    if buffer_status.status == BufferStatus.SEND_BUFFER:
-                        send_flag = True
+    #                 if buffer_status.status == BufferStatus.SEND_BUFFER:
+    #                     send_flag = True
                  
 
-                response = stub.send_buffer(generate_stream(self.send_buffer[0], type=type))
+    #             response = stub.send_buffer(generate_stream(self.send_buffer[0], type=type))
 
-                self.send_buffer = []
+    #             self.send_buffer = []
+        
+    def trigger_send(self, data, type=None, target_host=None, target_port=None):
+        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+            stub = CommServerStub(channel)
+
+            send_flag = False
+            while not send_flag:
+                buffer_status = stub.buffer_status(CheckBufferStatus(name=self.name, type=type))
+                
+                if buffer_status.status == BufferStatus.SEND_BUFFER:
+                    send_flag = True
+                
+
+            response = stub.send_buffer(generate_stream(data, type=type))
+
 
     def parallel_ring_reduce(self):#, data_dict):
         # print('\n Rank: ', rank, 'Ring ids: ', ring_ids, ' data dict: ', data_dict)
