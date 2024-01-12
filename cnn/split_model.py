@@ -7,6 +7,8 @@ from torch.fx import Tracer
 from pippy.IR import Pipe
 from pippy import split_into_equal_size
 
+from torchsummary import summary
+
 class CustomTracer(Tracer):
     """
     ``Tracer`` is the class that implements the symbolic tracing functionality
@@ -100,6 +102,8 @@ class Net(nn.Module):
         return out
     
 model = Net()
+
+# summary(model, input_data=(1,8,8))
 # model(torch.tensor(np.random.randn(32,1,8,8), dtype=torch.float32))
 pipe = split_model(model, 3)
 
