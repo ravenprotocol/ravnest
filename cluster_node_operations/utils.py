@@ -1,19 +1,42 @@
+import torch
+from torch import nn
+import pickle
+from pip._internal.operations.freeze import freeze
+
+from torch.fx import Tracer
+from pippy.IR import Pipe
+from pippy import split_into_equal_size
+
 from cluster_node_operations.genetic import *
 from cluster_node_operations.cluster import Cluster
 from cluster_node_operations.node import Node
 import numpy as np
 import random
+import json
 import copy
 
-def spawn_node_pool(num_nodes, ram_variants, bandwidth_variants):
+def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_variants=None):
     node_pool = []
-    for nid in range(num_nodes):
-        benchmarks = {'ram':random.choice(ram_variants), 'bandwidth':random.choice(bandwidth_variants)}
-        random_ip_address = '.'.join(str(np.random.randint(0, 255)) for _ in range(4))
-        node = Node(node_id=nid,
-                    ip_address=random_ip_address,
-                    benchmarks=benchmarks)
-        node_pool.append(node)
+    if mode == 'load_from_configs':
+        file = open('node_data/node_configs.json')
+        node_configs = json.load(file)
+        num_nodes = len(node_configs.keys())
+        for nid in range(num_nodes):
+            # print(nid, node_configs[str(nid)]['IP'], node_configs[str(nid)]['benchmarks'])
+            node = Node(node_id=nid,
+                        ip_address=node_configs[str(nid)]['IP'],
+                        benchmarks=node_configs[str(nid)]['benchmarks'])
+            node_pool.append(node)
+
+    else:
+        for nid in range(num_nodes):
+            benchmarks = {'ram':random.choice(ram_variants), 'bandwidth':random.choice(bandwidth_variants)}
+            random_ip_address = '.'.join(str(np.random.randint(0, 255)) for _ in range(4))
+            # print(nid, random_ip_address, benchmarks)
+            node = Node(node_id=nid,
+                        ip_address=random_ip_address,
+                        benchmarks=benchmarks)
+            node_pool.append(node)
     return node_pool
 
 def configure_clusters(max_attempts=5, num_nodes=None, full_model_size=None, ram_variants=None, bandwidth_variants=None):
@@ -33,7 +56,7 @@ def configure_clusters(max_attempts=5, num_nodes=None, full_model_size=None, ram
     return None  # or handle this case as needed
 
 
-def cluster_formation(full_model_size, node_pool):
+def cluster_formation(full_model_size, node_pool, state_dict):
     prelim_clusters = genetic_algorithm(node_pool, full_model_size)
     prelim_clusters = dict(sorted(prelim_clusters.items()))
     prelim_clusters = {new_key: prelim_clusters[old_key] for new_key, old_key in enumerate(prelim_clusters.keys())}
@@ -48,6 +71,7 @@ def cluster_formation(full_model_size, node_pool):
     for cluster in clusters:
         calculate_split_percentages(cluster=cluster, full_model_size=full_model_size)
         calculate_cluster_power(cluster=cluster)
+        cluster.state_dict = state_dict
     return clusters
 
 def round_percentages(percentages):
@@ -137,11 +161,18 @@ def form_rings(cluster_pool):
     # for continuous_rep in continuous_rings:
     #     print(continuous_rep)
 
+    # for cl in range(len(cluster_pool)):
+    #     cluster_pool[cl].ring_id_mapping = continuous_rings[cl]
+    #     r = 0
+    #     for nid, node in cluster_pool[cl].nodes.items():
+    #         node.ring_id_to_param_mapping = continuous_rings[cl][r]
+    #         r += 1
+        
     for cl in range(len(cluster_pool)):
-        cluster_pool[cl].ring_id_mapping = continuous_rings[cl]
+        cluster_pool[cl].ring_id_mapping = localized_rings[cl]
         r = 0
         for nid, node in cluster_pool[cl].nodes.items():
-            node.ring_id_to_param_mapping = continuous_rings[cl][r]
+            node.ring_id_to_param_mapping = localized_rings[cl][r]
             r += 1
         
     return 
@@ -178,8 +209,18 @@ def assign_connection_targets(cluster_pool):
     for cl in range(len(cluster_pool)):
         current_cluster = cluster_pool[cl]
         cluster_ip_map = current_cluster.inter_cluster_node_address_mappings
-        for nid, node in current_cluster.nodes.items():
+        
+        for nid, node in current_cluster.nodes.items():            
             node.next_cluster_target_node_ip_to_param_mapping = cluster_ip_map[list(current_cluster.nodes.keys()).index(nid)]
+
+        cluster_named_inter_cluster_node_address_mappings_list = []
+        for nid, node in current_cluster.nodes.items():            
+            for key, val in node.next_cluster_target_node_ip_to_param_mapping.items():
+                node.next_cluster_target_node_ip_to_named_param_mapping[key] = current_cluster.state_dict[val] 
+            cluster_named_inter_cluster_node_address_mappings_list.append(node.next_cluster_target_node_ip_to_named_param_mapping)
+
+        current_cluster.named_inter_cluster_node_address_mappings = cluster_named_inter_cluster_node_address_mappings_list
+        
     return True
 
 def representation_converter(cluster_split, target_split):    
@@ -216,4 +257,134 @@ def representation_converter(cluster_split, target_split):
 
     return continuous_result, local_result
     # return out
+
+
+class CustomTracer(Tracer):
+    """
+    ``Tracer`` is the class that implements the symbolic tracing functionality
+    of ``torch.fx.symbolic_trace``. A call to ``symbolic_trace(m)`` is equivalent
+    to ``Tracer().trace(m)``.
+    This Tracer override the ``is_leaf_module`` function to make symbolic trace
+    right in some cases.
+    """
+    def __init__(self, *args, customed_leaf_module=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.customed_leaf_module = customed_leaf_module
+
+    def is_leaf_module(self, m: torch.nn.Module, module_qualified_name : str) -> bool:
+        """
+        A method to specify whether a given ``nn.Module`` is a "leaf" module.
+        Leaf modules are the atomic units that appear in
+        the IR, referenced by ``call_module`` calls. By default,
+        Modules in the PyTorch standard library namespace (torch.nn)
+        are leaf modules. All other modules are traced through and
+        their constituent ops are recorded, unless specified otherwise
+        via this parameter.
+        Args:
+            m (Module): The module being queried about
+            module_qualified_name (str): The path to root of this module. For example,
+                if you have a module hierarchy where submodule ``foo`` contains
+                submodule ``bar``, which contains submodule ``baz``, that module will
+                appear with the qualified name ``foo.bar.baz`` here.
+        """
+        if self.customed_leaf_module and isinstance(m, self.customed_leaf_module):
+            return True
+        
+        if hasattr(m, '_is_leaf_module') and m._is_leaf_module:
+            return True
+
+        return m.__module__.startswith('torch.nn') and not isinstance(m, torch.nn.Sequential)
+
+
+def split_model(model, n_splits=3):
+    custom_tracer = CustomTracer()
+    split_policy = split_into_equal_size(n_splits)
+    pipe = Pipe.from_tracing(model, tracer=custom_tracer, split_policy=split_policy)
+    return pipe
+
+def get_arg_index(name, submod_args):
+    for i in range(len(submod_args)):
+        if submod_args[i].name == name:
+            return i
+    return -1
+
+
+def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths=None):
+
+    pipe = split_model(model, num_splits)
+    compiled_input_dict = {}
+    compiled_output_dict = {'model_inputs':{}}
+    for node in pipe.split_gm.graph.nodes:
+        print(node.name, node.args)
+        if 'submod' in node.name:
+            input_dict = {}
+            compiled_output_dict[node.name] = {}
+            if node.name == 'submod_0':
+                submod_0_args = node.args
+                for i in range(len(submod_0_args)):
+                    compiled_output_dict['model_inputs'][i] = {}
+            else:
+                if len(node.args) > 0:
+                    for i in range(len(node.args)):
+                        input_dict[i] = {}
+                arg_index = 0
+                for arg in node.args:
+                    if 'submod' in arg.name:
+                        input_dict[arg_index][arg.name] = 'placeholder:tensor'
+
+                        if compiled_output_dict[arg.name].get(arg_index, None) is not None:
+                            compiled_output_dict[arg.name][arg_index]['target'].append(node.name)   
+                        else:
+                            compiled_output_dict[arg.name][arg_index] = {'target' : [node.name]}
+
+
+                    elif 'getitem' in arg.name:
+                        inner_arg = arg.args             
+                        input_dict[arg_index][inner_arg[0].name] = inner_arg[1]
+
+                        if compiled_output_dict[inner_arg[0].name].get(inner_arg[1], None) is not None:
+                            compiled_output_dict[inner_arg[0].name][inner_arg[1]]['target'].append(node.name)   
+                        else:
+                            compiled_output_dict[inner_arg[0].name][inner_arg[1]] = {'target' : [node.name]}
+
+                    
+                    else:
+                        index = get_arg_index(arg.name, submod_0_args)
+                        input_dict[arg_index]['model_inputs'] = index
+
+                        if compiled_output_dict['model_inputs'][index].get('target', None) is not None:
+                            compiled_output_dict['model_inputs'][index]['target'].append(node.name)
+                        else:
+                            compiled_output_dict['model_inputs'][index]['target'] = [node.name]
+                    arg_index += 1
+            compiled_input_dict[node.name] = input_dict
+
+    # print('\ncompiled input dict: ', compiled_input_dict)
+    # print('\ncompiled output dict: ', compiled_output_dict)
+
+    for key, value in compiled_output_dict.items():
+        if key == 'model_inputs':
+            with open('cnn/templates/{}.pkl'.format(key), 'wb') as file:
+                pickle.dump(value,file)
+        else:
+            with open('cnn/templates/{}_output.pkl'.format(key), 'wb') as file:
+                pickle.dump(value,file)
+
+    for key, value in compiled_input_dict.items():
+        with open('cnn/templates/{}_input.pkl'.format(key), 'wb') as file:
+            pickle.dump(value,file)
+            
+
+    if cluster_path is None:
+        for key, val in pipe.split_gm._modules.items():
+            script = torch.jit.script(val)
+            script.save('cnn/{}.pt'.format(key))
+        #     print(key, val)
+    else:
+        for key, val in pipe.split_gm._modules.items():
+            script = torch.jit.script(val)
+            k = key.split('_')[-1]
+            print('{}/{}/{}.pt'.format(cluster_path, node_paths[int(k)], key))
+            script.save('{}/{}/submod.pt'.format(cluster_path, node_paths[int(k)]))
+        #     print(key, val)
 

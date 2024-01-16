@@ -7,7 +7,10 @@ class Cluster:
         self.total_ram = 0
         self.total_speed = 0
         self.ring_id_mapping = None
+        self.ring_id_named_mapping = None
+        self.state_dict = None
         self.inter_cluster_node_address_mappings = None
+        self.named_inter_cluster_node_address_mappings = None
 
     def add_node(self, node):
         if node.node_id in self.nodes:
@@ -29,9 +32,10 @@ class Cluster:
 
     def __repr__(self):
 
-        return "\nxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nCluster({})\nNodes:{}  \nICAM:{} \nRIDM:{}".format(self.cluster_id,
+        return "\nxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nCluster({})\nNodes:{}  \nICAM:{} \nNamedICAM:{} \nRIDM:{}".format(self.cluster_id,
                                                 list(self.nodes.keys()),
                                                 self.inter_cluster_node_address_mappings,
+                                                self.named_inter_cluster_node_address_mappings,
                                                 self.ring_id_mapping
                                       )
                                       
