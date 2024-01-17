@@ -1,9 +1,14 @@
 from cluster_node_operations.utils import *
+from cluster_node_operations.misc import get_trainable_parameters
 import torch
 from torch import nn
 import os
 import shutil
+import random
+import numpy as np
 
+random.seed(42)
+np.random.seed(42)
 
 def delete_all_folders(path):
     for folder in os.listdir(path):
@@ -73,7 +78,7 @@ all_params = list(model.state_dict().keys())
 full_model_size = len(model.state_dict().keys())
 
 node_pool = spawn_node_pool(mode='load_from_configs')
-cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool, state_dict=list(model.state_dict().keys()))
+cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool, state_dict=list(get_trainable_parameters(model).keys()))
 
 for node in node_pool:
     node_path = 'node_data/cluster_{}/{}'.format(node.cluster.cluster_id, node.ip_address)
@@ -95,7 +100,10 @@ for node in node_pool:
     node.set_submodel()
     node.set_ring_id_to_named_param_mapping()
 
-assigned_connection_targets = assign_connection_targets(cluster_pool=cluster_pool)
+assigned_connection_targets = simple_assign_connection_targets(cluster_pool=cluster_pool)
+
+for node in node_pool:
+    node.set_next_cluster_target_node_ip_to_named_param_mapping()
 
 print(node_pool)
 print(cluster_pool)

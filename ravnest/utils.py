@@ -82,6 +82,14 @@ def load_optim_weights_into_model(model, optimizer):
     for model_param, optimizer_param in zip(model.parameters(), optimizer_params(optimizer)):
         model_param.data = optimizer_param.data
 
+@torch.no_grad()
+def get_trainable_param_names(model):
+    param_names = []
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            param_names.append(name)
+    return param_names
+
 class TestFuture(Future):
     '''Based on hivemind future'''
     active_pid = None

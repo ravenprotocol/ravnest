@@ -55,7 +55,8 @@ class Node():
         self.ring_param_keys = {}
         self.data_dict = data_dict
         if data_dict is not None:
-            data_dict_keys = list(data_dict.keys())
+            # data_dict_keys = list(data_dict.keys())
+            data_dict_keys = get_trainable_param_names(model=self.model)
             print('ring ids: ', self.ring_ids)
             for i, ring in enumerate(self.ring_ids.items()):
                 if i < len(self.ring_ids) - 1:
@@ -263,14 +264,13 @@ class Node():
 
                     outputs = self.model(*model_args.values())
 
-                    loss = torch.nn.functional.mse_loss(outputs, targets)
-                    # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+                    # loss = torch.nn.functional.mse_loss(outputs, targets)
+                    loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
 
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
-
                     gradients = self.create_backward_payload(model_args=model_args)
 
                     # print('shape of gradients: ', gradients.shape, value['tensor_id'])
@@ -796,6 +796,7 @@ class Node():
 def create_chunks(data, size):
     chunked_data = {}
     for key, val in data.items():
+        print(key, val.shape)
         split_axis = np.argmax(val.shape)
         chunked_data[key] = np.array_split(val, size, axis=split_axis)
 

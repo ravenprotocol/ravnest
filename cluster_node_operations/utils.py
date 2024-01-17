@@ -388,3 +388,37 @@ def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths
             script.save('{}/{}/submod.pt'.format(cluster_path, node_paths[int(k)]))
         #     print(key, val)
 
+def simple_assign_connection_targets(cluster_pool):
+    temp_splits = [cluster.splits for cluster in cluster_pool]
+    splits = copy.deepcopy(temp_splits)
+    copy_splits = copy.deepcopy(splits)
+
+    for cl in range(len(copy_splits)):
+        if cl == len(copy_splits) - 1:
+            continuous_mapping, _ = representation_converter(cluster_split=copy_splits[0],target_split=copy_splits[cl])
+        else:
+            continuous_mapping, _ = representation_converter(cluster_split=copy_splits[cl + 1],target_split=copy_splits[cl])
+        cluster_pool[cl].inter_cluster_node_address_mappings = _#continuous_mapping
+                
+    for cl in range(len(cluster_pool)):
+        current_cluster = cluster_pool[cl]
+        if cl == len(cluster_pool) - 1:
+            next_cluster = cluster_pool[0]
+        else:
+            next_cluster = cluster_pool[cl + 1]
+        
+        address_param_mapping_list = []
+        for nid_param_mapping in current_cluster.inter_cluster_node_address_mappings:
+            address_param_mapping = copy.deepcopy(nid_param_mapping)
+            for cid, param_idx in nid_param_mapping.items():
+                actual_nid = list(next_cluster.nodes.keys())[cid]
+                del address_param_mapping[cid]
+                address_param_mapping[next_cluster.nodes[actual_nid].ip_address] = param_idx
+            address_param_mapping_list.append(address_param_mapping)
+        current_cluster.inter_cluster_node_address_mappings = address_param_mapping_list
+
+    for cl in range(len(cluster_pool)):
+        current_cluster = cluster_pool[cl]
+        cluster_ip_map = current_cluster.inter_cluster_node_address_mappings
+        for nid, node in current_cluster.nodes.items():
+            node.next_cluster_target_node_ip_to_param_mapping = cluster_ip_map[list(current_cluster.nodes.keys()).index(nid)]
