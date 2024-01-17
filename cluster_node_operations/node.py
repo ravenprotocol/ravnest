@@ -29,16 +29,16 @@ class Node:
 
     def set_ring_id_to_named_param_mapping(self):
         for ring_id, param in self.ring_id_to_param_mapping.items():
-            self.ring_id_to_named_param_mapping[ring_id] = list(get_trainable_parameters(self.submodel).keys())[param]
+            self.ring_id_to_named_param_mapping[ring_id] = self.cluster.state_dict[param]
 
     def set_cluster(self, cluster):
         self.cluster = cluster
 
     def __repr__(self):
-        return "\n\nNode({}, Cluster({})) \nself.IP({}) \nIPAdd2ParamMap({}) \nIPAdd2NamedParamMapping({}) \nRID2NamedParamMapping({})".format(self.node_id,
+        return "\n\nNode({}, Cluster({})) \nself.IP({}) \nIPAdd2ParamMap({}) \nIPAdd2NamedParamMapping({}) \nRID2Param({}) \nRID2NamedParamMapping({})".format(self.node_id,
                                                                                                         self.cluster.cluster_id if self.cluster else 'None', 
                                                                                                         self.ip_address,                                            
                                                                                                         self.next_cluster_target_node_ip_to_param_mapping,
                                                                                                         self.next_cluster_target_node_ip_to_named_param_mapping,
-                                                                                                        # self.ring_id_to_param_mapping,
+                                                                                                        self.ring_id_to_param_mapping,
                                                                                                         self.ring_id_to_named_param_mapping)

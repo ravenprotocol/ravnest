@@ -161,19 +161,19 @@ def form_rings(cluster_pool):
     # for continuous_rep in continuous_rings:
     #     print(continuous_rep)
 
-    # for cl in range(len(cluster_pool)):
-    #     cluster_pool[cl].ring_id_mapping = continuous_rings[cl]
-    #     r = 0
-    #     for nid, node in cluster_pool[cl].nodes.items():
-    #         node.ring_id_to_param_mapping = continuous_rings[cl][r]
-    #         r += 1
-        
     for cl in range(len(cluster_pool)):
-        cluster_pool[cl].ring_id_mapping = localized_rings[cl]
+        cluster_pool[cl].ring_id_mapping = continuous_rings[cl]
         r = 0
         for nid, node in cluster_pool[cl].nodes.items():
-            node.ring_id_to_param_mapping = localized_rings[cl][r]
+            node.ring_id_to_param_mapping = continuous_rings[cl][r]
             r += 1
+        
+    # for cl in range(len(cluster_pool)):
+    #     cluster_pool[cl].ring_id_mapping = localized_rings[cl]
+    #     r = 0
+    #     for nid, node in cluster_pool[cl].nodes.items():
+    #         node.ring_id_to_param_mapping = localized_rings[cl][r]
+    #         r += 1
         
     return 
 
