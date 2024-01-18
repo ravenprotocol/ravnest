@@ -1,24 +1,21 @@
 from ravnest.node import Node
 import numpy as np
 import time
+import torch
 
 host = '0.0.0.0'
 port = 8080
 
-data = np.array([[1,2,3],[4,5,6],[7,8,9]])
-# data = np.random.random(size=(3,3,4))
-param_names = ['a','b','c']
-ring_ids={0:'a', 1:'c'} #, 1:1}
-rank=0
-ring_size = 2
-data_dict = {}
-for i in range(len(data)):
-    # data_dict[i] = data[i]
-    data_dict[param_names[i]] = data[i]
-param_addresses = {'0.0.0.0:8082':'a', '0.0.0.0:8081':'c'}
-
 if __name__ == '__main__':
-    node = Node(name='n0', local_host=host, local_port=port, ring_ids=ring_ids, ring_size=ring_size, rank=rank, data_dict=data_dict, param_addresses=param_addresses) #forward_target_host='0.0.0.0', forward_target_port=8081)
+
+    model = torch.jit.load('node_data/cluster_1/192.128.30.92:8080/submod.pt')
+    param_addresses = {'192.128.30.92:8082': 'conv2d_1.weight'}
+    ring_ids = {0: 'conv2d_1.weight'}
+    data_dict = model.state_dict()
+    rank = 1
+    ring_size = 2
+
+    node = Node(name='n0', model=model, local_host=host, local_port=port, ring_ids=ring_ids, ring_size=ring_size, rank=rank, data_dict=data_dict, param_addresses=param_addresses) #forward_target_host='0.0.0.0', forward_target_port=8081)
     node.start()
     time.sleep(3)
     node.parallel_ring_reduce()
