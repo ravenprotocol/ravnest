@@ -1,11 +1,11 @@
-from cluster_node_operations.utils import *
-from cluster_node_operations.misc import get_trainable_parameters
-import torch
-from torch import nn
 import os
+import torch
+import json
 import shutil
 import random
 import numpy as np
+from cluster_node_operations.misc import *
+from cluster_node_operations.utils import *
 
 random.seed(42)
 np.random.seed(42)
@@ -18,7 +18,6 @@ def delete_all_folders(path):
 
 path = 'node_data/'
 delete_all_folders(path)
-
 
 class Net(nn.Module):    
     def __init__(self):
@@ -69,41 +68,87 @@ class Net(nn.Module):
         out = self.dense_2(out)
         out = self.act_4(out)
         return out
-
+    
 model = Net()
 
-all_params = list(model.state_dict().keys())
-# print(all_params)
-
-full_model_size = len(model.state_dict().keys())
-
 node_pool = spawn_node_pool(mode='load_from_configs')
-cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool, state_dict=list(get_trainable_parameters(model).keys()))
+
+cluster_pool = cluster_formation(full_model_size=len(model.state_dict()), node_pool=node_pool)
 
 for node in node_pool:
-    node_path = 'node_data/cluster_{}/{}'.format(node.cluster.cluster_id, node.ip_address)
+    node_path = 'node_data/cluster_{}/{}'.format(node.cluster_id, node.address)
     if not os.path.exists(node_path):
         os.makedirs(node_path)
-    
+
 for cluster in cluster_pool:
     cluster_node_ip_addresses = []
     for node_id, metadata in cluster.nodes.items():
-        cluster_node_ip_addresses.append(metadata.ip_address)
-    split_model_equal(model=model, 
+        cluster_node_ip_addresses.append(metadata.address)
+    split_model_equal(model=model,
                       num_splits=len(cluster.nodes), 
-                      cluster_path='node_data/cluster_{}'.format(cluster.cluster_id), 
+                      cluster_path='node_data/cluster_{}'.format(cluster.cid), 
                       node_paths=cluster_node_ip_addresses)
-
-formed_rings = form_rings(cluster_pool=cluster_pool)
-
+    
 for node in node_pool:
     node.set_submodel()
-    node.set_ring_id_to_named_param_mapping()
+    print('\n Node id: ', node.node_id, ' params: ', node.submodel.state_dict().keys())
 
-assigned_connection_targets = simple_assign_connection_targets(cluster_pool=cluster_pool)
+max_c = None
+max_l = 0
+for cluster in cluster_pool:
+    if cluster.size > max_l:
+        max_l = cluster.size
+        max_c = cluster
 
-for node in node_pool:
-    node.set_next_cluster_target_node_ip_to_named_param_mapping()
+print('No. rings: ', max_l)
+rid = 0
+for nid, node in max_c.nodes.items():
+    node.set_trainable_parameter_keys()
+    node.ring_ids[rid] = node.trainable_param_keys[0]
+    rid += 1
+
+max_c.set_ringwise_params()
+print('For max_c: ', max_c.cid)
+for nid,node in max_c.nodes.items():
+    print('node id: ', node.node_id, node.ring_ids)
+
+print('maxc all param to ring')
+print(max_c.all_param_to_ring)
+
+for cluster in cluster_pool:
+    if cluster.cid != max_c.cid:
+        for nid, node in cluster.nodes.items():
+            current_ring_id = None
+            node.set_trainable_parameter_keys()
+            for k in node.trainable_param_keys:
+                if current_ring_id != max_c.all_param_to_ring[k]:
+                    node.ring_ids[max_c.all_param_to_ring[k]] = k
+                    current_ring_id = max_c.all_param_to_ring[k]
+
+    print('\nRing ids cid: ', cluster.cid)
+    print([node.ring_ids for _,node in cluster.nodes.items()])  
+
+for cl in range(len(cluster_pool)):
+    cluster = cluster_pool[cl]
+    if cl == len(cluster_pool) - 1:
+        next_cluster = cluster_pool[0]
+    else:
+        next_cluster = cluster_pool[cl + 1]
+
+    for nid, node in cluster.nodes.items():
+        current_address = None
+        for k in node.trainable_param_keys:
+            # print(k)
+            for n_nid, n_node in next_cluster.nodes.items():
+                if k in n_node.trainable_param_keys:
+                    # print(current_address, n.address)
+                    if current_address != n_node.address:
+                        node.address_to_param[n_node.address] = k
+                        current_address = n_node.address
+    
+    print('\nCluster addresses for cid: ', cluster.cid)
+    print([node.address_to_param for _,node in cluster.nodes.items()])
 
 print(node_pool)
+
 print(cluster_pool)

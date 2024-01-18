@@ -24,7 +24,7 @@ def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_vari
         for nid in range(num_nodes):
             # print(nid, node_configs[str(nid)]['IP'], node_configs[str(nid)]['benchmarks'])
             node = Node(node_id=nid,
-                        ip_address=node_configs[str(nid)]['IP'],
+                        address=node_configs[str(nid)]['IP'],
                         benchmarks=node_configs[str(nid)]['benchmarks'])
             node_pool.append(node)
 
@@ -34,7 +34,7 @@ def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_vari
             random_ip_address = '.'.join(str(np.random.randint(0, 255)) for _ in range(4))
             # print(nid, random_ip_address, benchmarks)
             node = Node(node_id=nid,
-                        ip_address=random_ip_address,
+                        address=random_ip_address,
                         benchmarks=benchmarks)
             node_pool.append(node)
     return node_pool
@@ -56,11 +56,11 @@ def configure_clusters(max_attempts=5, num_nodes=None, full_model_size=None, ram
     return None  # or handle this case as needed
 
 
-def cluster_formation(full_model_size, node_pool, state_dict):
+def cluster_formation(full_model_size, node_pool):
     prelim_clusters = genetic_algorithm(node_pool, full_model_size)
     prelim_clusters = dict(sorted(prelim_clusters.items()))
     prelim_clusters = {new_key: prelim_clusters[old_key] for new_key, old_key in enumerate(prelim_clusters.keys())}
-
+    # print(prelim_clusters)
     clusters = [Cluster(cid) for cid in prelim_clusters.keys()]
 
     # assigning clusters to nodes based on genetic algorithm output
@@ -71,7 +71,7 @@ def cluster_formation(full_model_size, node_pool, state_dict):
     for cluster in clusters:
         calculate_split_percentages(cluster=cluster, full_model_size=full_model_size)
         calculate_cluster_power(cluster=cluster)
-        cluster.state_dict = state_dict
+        # cluster.state_dict = state_dict
     return clusters
 
 def round_percentages(percentages):

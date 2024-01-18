@@ -1,41 +1,35 @@
 class Cluster:
-    def __init__(self, cluster_id):
-        self.cluster_id = cluster_id
+    def __init__(self, cid) -> None:
+        self.cid = cid
         self.nodes = {}
+        self.size = 0
         self.rams = []
-        self.splits = None 
         self.total_ram = 0
         self.total_speed = 0
-        self.ring_id_mapping = None
-        self.ring_id_named_mapping = None
-        self.state_dict = None
-        self.inter_cluster_node_address_mappings = None
-        self.named_inter_cluster_node_address_mappings = None
+        self.splits = None
 
     def add_node(self, node):
-        if node.node_id in self.nodes:
-            raise ValueError("Node ID {} already exists in this cluster".format(node.node_id))
+        node.set_cluster_id(self.cid)
         self.nodes[node.node_id] = node
         self.rams.append(node.benchmarks['ram'])
-        node.set_cluster(self)
+        self.size += 1
 
-    def get_node(self, node_id):
-        if self.nodes.get(node_id, None) is None:
-            return False
-        return self.nodes[node_id]
+    def set_ringwise_params(self):
+        all_param_to_ring = {}
+        for nid, node in self.nodes.items():
+            for param in node.trainable_param_keys:
+                all_param_to_ring[param] = list(node.ring_ids.keys())[0]
+
+        self.all_param_to_ring = all_param_to_ring
 
     def assign_split_quotas_to_nodes(self):
         q = 0
         for id, node in self.nodes.items():
             node.split_quota = self.splits[q]
             q += 1
-
-    def __repr__(self):
-
-        return "\nxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nCluster({})\nNodes:{}  \nICAM:{} \nNamedICAM:{} \nRIDM:{}".format(self.cluster_id,
+    
+    def __repr__(self) -> str:
+        return "\nxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nCluster({})\nNodes:{} \nSplits({})".format(self.cid,
                                                 list(self.nodes.keys()),
-                                                self.inter_cluster_node_address_mappings,
-                                                self.named_inter_cluster_node_address_mappings,
-                                                self.ring_id_mapping
+                                                self.splits
                                       )
-                                      
