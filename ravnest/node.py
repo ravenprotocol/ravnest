@@ -53,28 +53,28 @@ class Node():
         self.ring_size = ring_size
         
         self.ring_param_keys = {}
-        self.data_dict = data_dict
-        if data_dict is not None:
-            # data_dict_keys = list(data_dict.keys())
-            data_dict_keys = get_trainable_param_names(model=self.model)
-            print('ring ids: ', self.ring_ids)
-            for i, ring in enumerate(self.ring_ids.items()):
-                if i < len(self.ring_ids) - 1:
-                    keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
-                else:
-                    keys = data_dict_keys[data_dict_keys.index(ring[1]):]
-                
-                self.ring_param_keys[ring[0]] = keys
+        # self.data_dict = data_dict
+        # if data_dict is not None:
+        # data_dict_keys = list(data_dict.keys())
+        data_dict_keys = get_trainable_param_names(model=self.model)
+        print('ring ids: ', self.ring_ids)
+        for i, ring in enumerate(self.ring_ids.items()):
+            if i < len(self.ring_ids) - 1:
+                keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
+            else:
+                keys = data_dict_keys[data_dict_keys.index(ring[1]):]
+            
+            self.ring_param_keys[ring[0]] = keys
 
-            self.param_address_mapping = {}
-            for i, address_to_param in enumerate(param_addresses.items()):
-                if i < len(param_addresses) - 1:
-                    keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):data_dict_keys.index(param_addresses[list(param_addresses.keys())[i+1]])]
-                else:
-                    keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):]
-                
-                for param_name in keys:
-                    self.param_address_mapping[param_name] = address_to_param[0]
+        self.param_address_mapping = {}
+        for i, address_to_param in enumerate(param_addresses.items()):
+            if i < len(param_addresses) - 1:
+                keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):data_dict_keys.index(param_addresses[list(param_addresses.keys())[i+1]])]
+            else:
+                keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):]
+            
+            for param_name in keys:
+                self.param_address_mapping[param_name] = address_to_param[0]
 
         # self.send_buffer = []
         self.labels = labels
@@ -625,8 +625,8 @@ class Node():
         # print('\n Rank: ', rank, 'Ring ids: ', ring_ids, ' data dict: ', data_dict)
         threads = []
         # data_dict_keys = list(data_dict.keys())
-        for ring_id, index in self.ring_ids.items():
-            ring_data = {k:self.data_dict[k] for k in self.ring_param_keys[ring_id]}
+        for ring_id, _ in self.ring_ids.items():
+            ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
             t = Thread(target=self.single_ring_reduce, args=(ring_data,ring_id,))
             threads.append(t)
             t.start()
@@ -638,13 +638,13 @@ class Node():
             thread.join()
 
     def single_ring_reduce(self, ring_data, ring_id):
-        # print('Starting ring reduce thread for: ', ring_id)
+        # print('Starting ring reduce thread for: ', ring_id, ring_data)
 
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
 
         for param, c in chunked_data.items():
             print('p: ', param)
-            for ch in c:
+            for ch in c['data']:
                 print(' chunk shape', ch.shape)
 
         iterations = self.ring_size - 1
@@ -658,9 +658,9 @@ class Node():
                 dest = self.param_address_mapping[id]
                 # print(' Dest: ', dest, ' send pos: ', send_pos, ' chunk: ', chunks[send_pos].shape)
                 if dest in address_send_data_mapping:
-                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks[send_pos]}
+                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks['data'][send_pos]}
                 else:
-                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks[send_pos]}}
+                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks['data'][send_pos]}}
             
             # print(address_send_data_mapping)
             send_threads = []
@@ -685,7 +685,7 @@ class Node():
                         for param_index, chunk_dict in recv_chunk.items():
                             # print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['chunk'].shape)
                             # chunked_data[param_index][recv_pos] += chunk_dict['chunk'][:]
-                            chunked_data[param_index][chunk_dict['pos']] += chunk_dict['chunk'][:]
+                            chunked_data[param_index]['data'][chunk_dict['pos']] += chunk_dict['chunk'][:]
                             keys_received += 1 
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -708,9 +708,9 @@ class Node():
                 #     address_send_data_mapping[dest] = {id:chunks[send_pos]}
 
                 if dest in address_send_data_mapping:
-                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks[send_pos]}
+                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks['data'][send_pos]}
                 else:
-                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks[send_pos]}}
+                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks['data'][send_pos]}}
 
             send_threads = []
             for address, data_dict in address_send_data_mapping.items():
@@ -733,7 +733,7 @@ class Node():
                         
                         for param_index, chunk_dict in recv_chunk.items():
                             # chunked_data[param_index][recv_pos] = chunk[:]
-                            chunked_data[param_index][chunk_dict['pos']] = chunk_dict['chunk'][:]
+                            chunked_data[param_index]['data'][chunk_dict['pos']] = chunk_dict['chunk'][:]
                             keys_received += 1
 
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -741,7 +741,12 @@ class Node():
             self.gather_iteration[ring_id] += 1
 
         self.gather_iteration[ring_id] = 0
-        print('Ring id: ', ring_id,'Gathered: {}'.format(chunked_data)) 
+        # print('Ring id: ', ring_id,'Gathered: {}'.format(chunked_data))
+
+        for param, chunk in chunked_data.items():
+            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']) / self.ring_size
+
+        print('Ring id: ', ring_id,'Gathered after cat: {}'.format(chunked_data))
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         print('target host: ', target_host, target_port)
@@ -798,6 +803,10 @@ def create_chunks(data, size):
     for key, val in data.items():
         print(key, val.shape)
         split_axis = np.argmax(val.shape)
-        chunked_data[key] = np.array_split(val, size, axis=split_axis)
+        chunked_data[key] = {}
+        # chunked_data[key]['data'] = np.array_split(val, size, axis=split_axis)
+        chunked_data[key]['data'] = list(torch.chunk(val, chunks=size, dim=split_axis))
+        chunked_data[key]['split_axis'] = split_axis
+        # chunked_data[key] = np.array_split(val, size, axis=split_axis)
 
     return chunked_data
