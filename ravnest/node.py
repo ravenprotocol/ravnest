@@ -95,12 +95,11 @@ class Node():
         self.node_status = NodeStatus.IDLE
 
         if submod_file is not None:
-            with open('{}submod_input.pkl'.format(template_path), 'rb') as fout:
+            with open('{}{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
                 self.input_template = pickle.load(fout)
-
-            with open('{}submod_output.pkl'.format(template_path), 'rb') as fout:
+            with open('{}{}_output.pkl'.format(template_path, submod_file), 'rb') as fout:
                 self.output_template = pickle.load(fout)
-
+            print(self.input_template)
             if self.backward_target_host is None and self.backward_target_port is None:
                 self.node_type = NodeTypes.ROOT
                 with open('{}model_inputs.pkl'.format(template_path), 'rb') as fout:
@@ -210,13 +209,19 @@ class Node():
                 del self.load_forward_buffer[0]
                 self.forward_lock.release()
                 action = value['action']
+
+                if action == ActionTypes.FORWARD and self.node_type == NodeTypes.LEAF:
+                    action = ActionTypes.FIND_LOSS
+                if action == ActionTypes.NO_GRAD_FORWARD and self.node_type == NodeTypes.LEAF:
+                    action = ActionTypes.ACCURACY
                 
                 if action == ActionTypes.FORWARD:
                     self.node_status = NodeStatus.FORWARD
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
                     model_args = self.create_model_args(data, forward_pass_id=forward_pass_id)
-                                
+                    # print('model args: ', model_args)
+                    
                     if not self.model.training:
                         self.model.train()
 
@@ -257,15 +262,15 @@ class Node():
                     # print('data in find_loss: ', data)
 
                     model_args = self.create_model_args(data)
-
+                    print('model args: ', model_args)
 
                     if not self.model.training:
                         self.model.train()
 
                     outputs = self.model(*model_args.values())
 
-                    # loss = torch.nn.functional.mse_loss(outputs, targets)
-                    loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+                    loss = torch.nn.functional.mse_loss(outputs, targets)
+                    # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
 
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
@@ -291,8 +296,8 @@ class Node():
                     print('Find loss done')
                     self.n_backwards += 1
 
-                    # if self.n_backwards % self.reduce_threshold == 0:
-                    #     self.parallel_ring_reduce()
+                    if self.n_backwards % self.reduce_threshold == 0:
+                        self.parallel_ring_reduce()
 
                 elif action == ActionTypes.NO_GRAD_FORWARD:
                     self.node_status = NodeStatus.FORWARD
@@ -420,6 +425,7 @@ class Node():
 
               
     def create_model_args(self, data, forward_pass_id=None):
+        print('data received: ', data)
         if self.node_type != NodeTypes.LEAF:
             model_args = []
             self.input_tensors[forward_pass_id] = {}

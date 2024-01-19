@@ -364,16 +364,16 @@ def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths
             with open('{}/{}/{}.pkl'.format(cluster_path, model_input_node, key), 'wb') as file:
                 pickle.dump(value,file)
         else:
-            l = key.split('_')[:-1]
+            # l = key.split('_')[:-1]
             k = key.split('_')[-1]
-            with open('{}/{}/{}_output.pkl'.format(cluster_path, node_paths[int(k)],l[0]), 'wb') as file:
+            with open('{}/{}/{}_output.pkl'.format(cluster_path, node_paths[int(k)],key), 'wb') as file:
                 pickle.dump(value,file)
 
     for key, value in compiled_input_dict.items():        
-        l = key.split('_')[:-1]
+        # l = key.split('_')[:-1]
         k = key.split('_')[-1]
-        print('key in compiled dict: ', l, k)
-        with open('{}/{}/{}_input.pkl'.format(cluster_path, node_paths[int(k)],l[0]), 'wb') as file:
+        # print('key in compiled dict: ', l, k)
+        with open('{}/{}/{}_input.pkl'.format(cluster_path, node_paths[int(k)],key), 'wb') as file:
             pickle.dump(value,file)
             
     for key, val in pipe.split_gm._modules.items():
