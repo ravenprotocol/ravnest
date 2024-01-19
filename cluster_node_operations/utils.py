@@ -309,7 +309,7 @@ def get_arg_index(name, submod_args):
     return -1
 
 
-def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths=None):
+def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths=None, model_input_node=None):
 
     pipe = split_model(model, num_splits)
     compiled_input_dict = {}
@@ -359,34 +359,29 @@ def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths
                     arg_index += 1
             compiled_input_dict[node.name] = input_dict
 
-    # print('\ncompiled input dict: ', compiled_input_dict)
-    # print('\ncompiled output dict: ', compiled_output_dict)
-
     for key, value in compiled_output_dict.items():
         if key == 'model_inputs':
-            with open('cnn/templates/{}.pkl'.format(key), 'wb') as file:
+            with open('{}/{}/{}.pkl'.format(cluster_path, model_input_node, key), 'wb') as file:
                 pickle.dump(value,file)
         else:
-            with open('cnn/templates/{}_output.pkl'.format(key), 'wb') as file:
+            l = key.split('_')[:-1]
+            k = key.split('_')[-1]
+            with open('{}/{}/{}_output.pkl'.format(cluster_path, node_paths[int(k)],l[0]), 'wb') as file:
                 pickle.dump(value,file)
 
-    for key, value in compiled_input_dict.items():
-        with open('cnn/templates/{}_input.pkl'.format(key), 'wb') as file:
+    for key, value in compiled_input_dict.items():        
+        l = key.split('_')[:-1]
+        k = key.split('_')[-1]
+        print('key in compiled dict: ', l, k)
+        with open('{}/{}/{}_input.pkl'.format(cluster_path, node_paths[int(k)],l[0]), 'wb') as file:
             pickle.dump(value,file)
             
+    for key, val in pipe.split_gm._modules.items():
+        script = torch.jit.script(val)
+        k = key.split('_')[-1]
+        print('{}/{}/{}.pt'.format(cluster_path, node_paths[int(k)], key))
+        script.save('{}/{}/submod.pt'.format(cluster_path, node_paths[int(k)]))
 
-    if cluster_path is None:
-        for key, val in pipe.split_gm._modules.items():
-            script = torch.jit.script(val)
-            script.save('cnn/{}.pt'.format(key))
-        #     print(key, val)
-    else:
-        for key, val in pipe.split_gm._modules.items():
-            script = torch.jit.script(val)
-            k = key.split('_')[-1]
-            print('{}/{}/{}.pt'.format(cluster_path, node_paths[int(k)], key))
-            script.save('{}/{}/submod.pt'.format(cluster_path, node_paths[int(k)]))
-        #     print(key, val)
 
 def simple_assign_connection_targets(cluster_pool):
     temp_splits = [cluster.splits for cluster in cluster_pool]

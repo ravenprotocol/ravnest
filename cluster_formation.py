@@ -81,13 +81,15 @@ for node in node_pool:
         os.makedirs(node_path)
 
 for cluster in cluster_pool:
+    model_input_node = cluster.nodes[list(cluster.nodes.keys())[0]].address
     cluster_node_ip_addresses = []
     for node_id, metadata in cluster.nodes.items():
         cluster_node_ip_addresses.append(metadata.address)
     split_model_equal(model=model,
                       num_splits=len(cluster.nodes), 
                       cluster_path='node_data/cluster_{}'.format(cluster.cid), 
-                      node_paths=cluster_node_ip_addresses)
+                      node_paths=cluster_node_ip_addresses,
+                      model_input_node = model_input_node)
     
 for node in node_pool:
     node.set_submodel()

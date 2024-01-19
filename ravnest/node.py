@@ -95,15 +95,15 @@ class Node():
         self.node_status = NodeStatus.IDLE
 
         if submod_file is not None:
-            with open('{}/{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
+            with open('{}submod_input.pkl'.format(template_path), 'rb') as fout:
                 self.input_template = pickle.load(fout)
 
-            with open('{}/{}_output.pkl'.format(template_path, submod_file), 'rb') as fout:
+            with open('{}submod_output.pkl'.format(template_path), 'rb') as fout:
                 self.output_template = pickle.load(fout)
 
             if self.backward_target_host is None and self.backward_target_port is None:
                 self.node_type = NodeTypes.ROOT
-                with open('{}/model_inputs.pkl'.format(template_path), 'rb') as fout:
+                with open('{}model_inputs.pkl'.format(template_path), 'rb') as fout:
                     self.model_inputs_template = pickle.load(fout)
                 self.optimizer = optimizer(current_model_params_clone(self.model))
             elif self.forward_target_host is None and self.forward_target_port is None:
@@ -199,8 +199,8 @@ class Node():
                     print('Backward done')
                     self.n_backwards += 1
 
-                    # if self.n_backwards % self.reduce_threshold == 0:
-                    #     self.parallel_ring_reduce()
+                    if self.n_backwards % self.reduce_threshold == 0:
+                        self.parallel_ring_reduce()
 
             self.node_status = NodeStatus.IDLE
 

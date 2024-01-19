@@ -41,14 +41,15 @@ def get_dataset():
     return X_train, X_test, y_train, y_test
 
 X, X_test, y, y_test = get_dataset()
-model = torch.jit.load('cnn/submod_0.pt')
-
+# model = torch.jit.load('cnn/submod_0.pt')
+node_path = 'node_data/cluster_0/192.128.30.90:8080/'
+model = torch.jit.load(node_path+'submod.pt')
 
 host = '0.0.0.0'
 port = 8080
 
 if __name__ == '__main__':
-    node = Node(name='n0', template_path='cnn/templates', submod_file='submod_0', local_host=host, local_port=port, model=model, optimizer=torch.optim.Adam, forward_target_host='0.0.0.0', forward_target_port=8081)
+    node = Node(name='n0', template_path=node_path, submod_file='submod_0', local_host=host, local_port=port, model=model, optimizer=torch.optim.Adam, forward_target_host='0.0.0.0', forward_target_port=8081)
     node.start()
     batch_size = 64
     epochs = 100
