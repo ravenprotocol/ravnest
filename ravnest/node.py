@@ -94,6 +94,8 @@ class Node():
         self.submod_file = submod_file
         self.node_status = NodeStatus.IDLE
 
+        self.averaged_params_buffer = {}
+
         if submod_file is not None:
             with open('{}{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
                 self.input_template = pickle.load(fout)
@@ -643,6 +645,17 @@ class Node():
         for thread in threads:
             thread.join()
 
+        print('Averaged params buffer: ', len(self.averaged_params_buffer), self.averaged_params_buffer.keys())
+        print('Model dict keys: ', self.model.state_dict().keys())
+
+        print('Model state dict before loading: ', self.model.state_dict())
+        self.model.load_state_dict(self.averaged_params_buffer, strict=False)
+
+        print('Model state dict after loading: ', self.model.state_dict())
+
+        load_model_weights_into_optim(self.model, self.optimizer)
+        print('Optimizer weights updated: ', self.optimizer.state)
+
     def single_ring_reduce(self, ring_data, ring_id):
         # print('Starting ring reduce thread for: ', ring_id, ring_data)
 
@@ -753,6 +766,7 @@ class Node():
             chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']) / self.ring_size
 
         print('Ring id: ', ring_id,'Gathered after cat: {}'.format(chunked_data))
+        self.averaged_params_buffer.update(chunked_data)
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         print('target host: ', target_host, target_port)

@@ -75,12 +75,17 @@ def optimizer_params(optimizer):
 @torch.no_grad()
 def load_grads_into_optimizer(model, optimizer):
     for model_param, optimizer_param in zip(model.parameters(), optimizer_params(optimizer)):
-        optimizer_param.grad = model_param.grad.clone()
+        optimizer_param.grad = model_param.grad #.clone()
 
 @torch.no_grad()
 def load_optim_weights_into_model(model, optimizer):
     for model_param, optimizer_param in zip(model.parameters(), optimizer_params(optimizer)):
         model_param.data = optimizer_param.data
+
+@torch.no_grad()
+def load_model_weights_into_optim(model, optimizer):
+    for model_param, optimizer_param in zip(model.parameters(), optimizer_params(optimizer)):
+        optimizer_param.data = model_param.data
 
 @torch.no_grad()
 def get_trainable_param_names(model):
