@@ -631,6 +631,7 @@ class Node():
 
     def parallel_ring_reduce(self):#, data_dict):
         # print('\n Rank: ', rank, 'Ring ids: ', ring_ids, ' data dict: ', data_dict)
+        print('Begining Parameter Averaging')
         threads = []
         # data_dict_keys = list(data_dict.keys())
         for ring_id, _ in self.ring_ids.items():
@@ -645,26 +646,27 @@ class Node():
         for thread in threads:
             thread.join()
 
-        print('Averaged params buffer: ', len(self.averaged_params_buffer), self.averaged_params_buffer.keys())
-        print('Model dict keys: ', self.model.state_dict().keys())
+        # print('Averaged params buffer: ', len(self.averaged_params_buffer), self.averaged_params_buffer.keys())
+        # print('Model dict keys: ', self.model.state_dict().keys())
 
-        print('Model state dict before loading: ', self.model.state_dict())
+        # print('Model state dict before loading: ', self.model.state_dict())
         self.model.load_state_dict(self.averaged_params_buffer, strict=False)
 
-        print('Model state dict after loading: ', self.model.state_dict())
+        # print('Model state dict after loading: ', self.model.state_dict())
 
         load_model_weights_into_optim(self.model, self.optimizer)
-        print('Optimizer weights updated: ', self.optimizer.state)
+        # print('Optimizer weights updated: ', self.optimizer.state)
+        print('Parameter Averaging Complete')
 
     def single_ring_reduce(self, ring_data, ring_id):
         # print('Starting ring reduce thread for: ', ring_id, ring_data)
 
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
 
-        for param, c in chunked_data.items():
-            print('p: ', param)
-            for ch in c['data']:
-                print(' chunk shape', ch.shape)
+        # for param, c in chunked_data.items():
+        #     print('p: ', param)
+        #     for ch in c['data']:
+        #         print(' chunk shape', ch.shape)
 
         iterations = self.ring_size - 1
 
@@ -712,7 +714,8 @@ class Node():
             self.reduce_iteration[ring_id] += 1
 
         self.reduce_iteration[ring_id] = 0
-        print('Ring id: ', ring_id, ' Reduced: ', chunked_data, ' reduce iteration reset: ', self.reduce_iteration[ring_id])
+        # print('Ring id: ', ring_id, ' Reduced: ', chunked_data, ' reduce iteration reset: ', self.reduce_iteration[ring_id])
+        print('Reduced Ring id: ', ring_id)
 
         send_pos = (recv_pos+1)%self.ring_size
         recv_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
@@ -765,11 +768,12 @@ class Node():
         for param, chunk in chunked_data.items():
             chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']) / self.ring_size
 
-        print('Ring id: ', ring_id,'Gathered after cat: {}'.format(chunked_data))
+        # print('Ring id: ', ring_id,'Gathered after cat: {}'.format(chunked_data))
+        print('Gathered Ring id: ', ring_id)
         self.averaged_params_buffer.update(chunked_data)
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
-        print('target host: ', target_host, target_port)
+        # print('target host: ', target_host, target_port)
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
             stub = CommServerStub(channel)
             while True:
@@ -779,7 +783,7 @@ class Node():
             response = stub.reduce_chunk(generate_data_stream(data_dict, ring_id=ring_id))
 
     def send_gather_chunk(self, target_host, target_port, data_dict, ring_id):
-        print('target host: ', target_host, target_port)
+        # print('target host: ', target_host, target_port)
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
             stub = CommServerStub(channel)
             while True:
