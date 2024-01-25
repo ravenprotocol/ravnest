@@ -89,12 +89,13 @@ class Node():
         self.n_backwards = 0
         self.forward_pass_id = 0
 
-        self.reduce_threshold = 4
+        self.reduce_threshold = 8
 
         self.submod_file = submod_file
         self.node_status = NodeStatus.IDLE
 
         self.averaged_params_buffer = {}
+        self.average_no = 0
 
         if submod_file is not None:
             with open('{}{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
@@ -264,7 +265,7 @@ class Node():
                     # print('data in find_loss: ', data)
 
                     model_args = self.create_model_args(data)
-                    print('model args: ', model_args)
+                    # print('model args: ', model_args)
 
                     if not self.model.training:
                         self.model.train()
@@ -302,6 +303,7 @@ class Node():
                         self.parallel_ring_reduce()
 
                 elif action == ActionTypes.NO_GRAD_FORWARD:
+                    self.parallel_ring_reduce()
                     self.node_status = NodeStatus.FORWARD
                     print('No grad forward')
                     data = value['data']
@@ -330,6 +332,7 @@ class Node():
                     # self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
 
                 elif action == ActionTypes.ACCURACY:
+                    self.parallel_ring_reduce()
                     print('Finding accuracy')
                     data = value['data']
                     model_args = self.create_no_grad_model_args(data)
@@ -401,6 +404,7 @@ class Node():
         
 
     def no_grad_forward_compute(self, tensors=None, output_type=None):
+        self.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
         self.model.eval()
         with torch.no_grad():
@@ -425,9 +429,9 @@ class Node():
         print('No Grad forward compute done')
         self.node_status = NodeStatus.IDLE
 
-              
+    
     def create_model_args(self, data, forward_pass_id=None):
-        print('data received: ', data)
+        # print('data received: ', data)
         if self.node_type != NodeTypes.LEAF:
             model_args = []
             self.input_tensors[forward_pass_id] = {}
@@ -631,7 +635,8 @@ class Node():
 
     def parallel_ring_reduce(self):#, data_dict):
         # print('\n Rank: ', rank, 'Ring ids: ', ring_ids, ' data dict: ', data_dict)
-        print('Begining Parameter Averaging')
+        print('\nBegining Parameter Averaging')
+        # print('State dict before averaging: ', self.model.state_dict())
         threads = []
         # data_dict_keys = list(data_dict.keys())
         for ring_id, _ in self.ring_ids.items():
@@ -647,16 +652,14 @@ class Node():
             thread.join()
 
         # print('Averaged params buffer: ', len(self.averaged_params_buffer), self.averaged_params_buffer.keys())
-        # print('Model dict keys: ', self.model.state_dict().keys())
 
-        # print('Model state dict before loading: ', self.model.state_dict())
-        self.model.load_state_dict(self.averaged_params_buffer, strict=False)
-
-        # print('Model state dict after loading: ', self.model.state_dict())
+        # self.model.load_state_dict(self.averaged_params_buffer, strict=False)
+        load_state_dict_conserve_versions(self.model, self.averaged_params_buffer)
 
         load_model_weights_into_optim(self.model, self.optimizer)
         # print('Optimizer weights updated: ', self.optimizer.state)
-        print('Parameter Averaging Complete')
+        self.average_no += 1 
+        print('\nParameter Averaging Complete: ', self.average_no)
 
     def single_ring_reduce(self, ring_data, ring_id):
         # print('Starting ring reduce thread for: ', ring_id, ring_data)
@@ -705,9 +708,9 @@ class Node():
                         self.reduce_ring_buffers[ring_id] = received_data
                         for param_index, chunk_dict in recv_chunk.items():
                             # print('param: ', param_index, ' recv pos: ', recv_pos, ' pos from data: ' , chunk_dict['pos'], ' received chunk: ', chunk_dict['chunk'].shape)
-                            # chunked_data[param_index][recv_pos] += chunk_dict['chunk'][:]
-                            chunked_data[param_index]['data'][chunk_dict['pos']] += chunk_dict['chunk'][:]
-                            keys_received += 1 
+                            # chunked_data[param_index]['data'][chunk_dict['pos']] += chunk_dict['chunk'][:]
+                            chunked_data[param_index]['data'][chunk_dict['pos']] = chunked_data[param_index]['data'][chunk_dict['pos']].add(chunk_dict['chunk'][:])
+                            keys_received += 1
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
             send_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
@@ -755,7 +758,8 @@ class Node():
                         
                         for param_index, chunk_dict in recv_chunk.items():
                             # chunked_data[param_index][recv_pos] = chunk[:]
-                            chunked_data[param_index]['data'][chunk_dict['pos']] = chunk_dict['chunk'][:]
+                            chunked_data[param_index]['data'][chunk_dict['pos']].data = chunk_dict['chunk'].data[:]
+                            # chunked_data[param_index]['data'][chunk_dict['pos']] = chunk_dict['chunk'][:]
                             keys_received += 1
 
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -766,7 +770,7 @@ class Node():
         # print('Ring id: ', ring_id,'Gathered: {}'.format(chunked_data))
 
         for param, chunk in chunked_data.items():
-            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']) / self.ring_size
+            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size)
 
         # print('Ring id: ', ring_id,'Gathered after cat: {}'.format(chunked_data))
         print('Gathered Ring id: ', ring_id)
