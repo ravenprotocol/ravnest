@@ -1,8 +1,10 @@
 grpcio==1.51.3
 grpcio-tools==1.51.3
 numpy==1.21.5
-pip==22.2.1
-pippy==0.1.0
+pip
 protobuf==4.24.4
 scikit_learn==1.1.1
 torch==2.0.0
+torchpippy==0.1.1
+packaging
+psutil

@@ -4,6 +4,11 @@ Ravnest introduces a novel asynchronous parallel training approach that combines
 
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 
+### Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
 ### Usage
 
 Compile the protobufs:
@@ -15,7 +20,7 @@ python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. p
 Generate the submodel files:
 
 ```bash
-python sorter/split_model.py
+python cluster_formation.py
 ```
 
 Order of Execution of Clients (in 3 terminals):
