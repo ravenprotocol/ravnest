@@ -5,6 +5,8 @@ import threading
 import multiprocessing as mp
 from threading import Thread
 import numpy as np
+import itertools
+import psutil
 import pickle
 import time
 from ravnest.utils import *
@@ -21,8 +23,7 @@ class Node():
                  forward_target_host=None, forward_target_port=None,
                  backward_target_host=None, backward_target_port=None, 
                  model=None, optimizer=None, labels=None, test_labels=None,
-                 ring_ids=None, rank=None, ring_size = None, data_dict = None,
-                 param_addresses = None
+                 ring_ids=None, rank=None, ring_size = None, param_addresses = None, device = 'cpu'
                  ):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
@@ -34,6 +35,10 @@ class Node():
         self.name = name
 
         self.model = model
+        self.device = device
+
+        if not next(self.model.parameters()).is_cuda:
+            self.model.to(device)
 
         self.load_forward_buffer = self.manager.list()
         self.load_backward_buffer = self.manager.list()
@@ -167,8 +172,10 @@ class Node():
                     self.optimizer.zero_grad()
 
                     for key, value in gradient_dict.items():
+                        if value.device.type != self.device:
+                            value = value.to(self.device)
+
                         output_tensor = self.output_tensors[key]
-                                    
                         if len(self.output_tensors) > 1:
                             output_tensor.backward(value, retain_graph=True)
                         else:
@@ -198,7 +205,7 @@ class Node():
                     if self.input_tensors.get(forward_pass_id, None) is not None:
                         del self.input_tensors[forward_pass_id]
 
-                    print('Backward done')
+                    print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
                     self.n_backwards += 1
 
                     if self.n_backwards % self.reduce_threshold == 0:
@@ -253,12 +260,16 @@ class Node():
                     t.start()
 
                     # self.trigger_send(type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
-                    print('Forward Done')
+                    print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
 
                 elif action == ActionTypes.FIND_LOSS:
+                    print('In find loss')
                     self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
-                    targets = self.labels[data_id:data_id+value['input_size']]
+                    if hasattr(self.labels, '__iter__'):
+                        targets = next(itertools.islice(self.labels, data_id, None))[1]
+                    else:
+                        targets = self.labels[data_id:data_id+value['input_size']]
                     
                     data = value['data']
 
@@ -272,8 +283,9 @@ class Node():
 
                     outputs = self.model(*model_args.values())
 
-                    loss = torch.nn.functional.mse_loss(outputs, targets)
+                    # loss = torch.nn.functional.mse_loss(outputs, targets)
                     # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+                    loss = torch.nn.functional.cross_entropy(outputs,targets)
 
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
@@ -296,7 +308,7 @@ class Node():
                     t.start()
 
                     # self.trigger_send(type=ActionTypes.BACKWARD, target_host=self.backward_target_host, target_port=self.backward_target_port)
-                    print('Find loss done')
+                    print('Find loss done Used RAM %: ', psutil.virtual_memory().percent)
                     self.n_backwards += 1
 
                     if self.n_backwards % self.reduce_threshold == 0:
@@ -441,6 +453,10 @@ class Node():
                     if isinstance(v, str) or isinstance(v, int):
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
+
+                            if data[k][arg_pos]['data'].device.type != self.device:
+                                data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)
+
                             model_args.append(data[k][arg_pos]['data'])
                             if self.node_type != NodeTypes.LEAF:
                                 self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
@@ -456,8 +472,12 @@ class Node():
                     elif self.submod_file in data[k][v]['target']:
                         tensor_id = data[k][v]['tensor_id']
                         if 'submod' in k or 'model_inputs' in k:                                    
-                            if isinstance(v, int):                                        
-                                model_args.append(data[k][v]['data'])   
+                            if isinstance(v, int):    
+                                
+                                if data[k][v]['data'].device.type != self.device:
+                                    data[k][v]['data'] = data[k][v]['data'].to(self.device)
+
+                                model_args.append(data[k][v]['data'])
                                 if self.node_type != NodeTypes.LEAF:
                                     if k != 'model_inputs':
                                         self.input_tensors[forward_pass_id][tensor_id] = data[k][v]['data']                                 
@@ -481,6 +501,10 @@ class Node():
                     if isinstance(v, str) or isinstance(v, int):
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
+
+                            if data[k][arg_pos]['data'].device.type != self.device:
+                                data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)                            
+
                             model_args[tensor_id] = data[k][arg_pos]['data']
                             if self.node_type != NodeTypes.LEAF:
                                 self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
@@ -496,7 +520,9 @@ class Node():
                     elif self.submod_file in data[k][v]['target']:
                         tensor_id = data[k][v]['tensor_id']
                         if 'submod' in k or 'model_inputs' in k:                                    
-                            if isinstance(v, int):                                        
+                            if isinstance(v, int):
+                                if data[k][v]['data'].device.type != self.device:
+                                    data[k][v]['data'] = data[k][v]['data'].to(self.device)                                      
                                 model_args[tensor_id] = data[k][v]['data']    
                             # elif 'placeholder' in v:
                             #     model_args[tensor_id] = data[k][0]['data']
@@ -516,6 +542,10 @@ class Node():
             for k, v in arg_metadata.items():                 
                 if isinstance(v, str) or isinstance(v, int):
                     if self.submod_file in data[k][arg_pos]['target']:
+
+                        if data[k][arg_pos]['data'].device.type != self.device:
+                            data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device) 
+                        
                         model_args.append(data[k][arg_pos]['data'])
 
                         data[k][arg_pos]['target'].remove(self.submod_file)
@@ -529,7 +559,9 @@ class Node():
                        
                 elif self.submod_file in data[k][v]['target']:
                     if 'submod' in k or 'model_inputs' in k:                                    
-                        if isinstance(v, int):                                        
+                        if isinstance(v, int):
+                            if data[k][v]['data'].device.type != self.device:
+                                data[k][v]['data'] = data[k][v]['data'].to(self.device)                                  
                             model_args.append(data[k][v]['data'])       
                         # elif 'placeholder' in v:
                         #     model_args.append(data[k][0]['data'])
@@ -659,7 +691,7 @@ class Node():
         load_model_weights_into_optim(self.model, self.optimizer)
         # print('Optimizer weights updated: ', self.optimizer.state)
         self.average_no += 1 
-        print('\nParameter Averaging Complete: ', self.average_no)
+        print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
 
     def single_ring_reduce(self, ring_data, ring_id):
         # print('Starting ring reduce thread for: ', ring_id, ring_data)
