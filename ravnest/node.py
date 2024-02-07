@@ -53,6 +53,7 @@ class Node():
             for ring_id, _ in self.ring_ids.items():
                 self.reduce_iteration[ring_id] = 0
                 self.gather_iteration[ring_id] = 0
+            print('ring ids: ', self.ring_ids)
 
         self.rank = rank
         self.ring_size = ring_size
@@ -62,7 +63,6 @@ class Node():
         # if data_dict is not None:
         # data_dict_keys = list(data_dict.keys())
         data_dict_keys = get_trainable_param_names(model=self.model)
-        print('ring ids: ', self.ring_ids)
         for i, ring in enumerate(self.ring_ids.items()):
             if i < len(self.ring_ids) - 1:
                 keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
@@ -88,7 +88,7 @@ class Node():
         self.forward_target_port = forward_target_port
         self.backward_target_host = backward_target_host
         self.backward_target_port = backward_target_port
-        self.tensor_id = 0
+
         self.output_tensors = {}
         self.input_tensors = {}
         self.n_backwards = 0
@@ -98,6 +98,7 @@ class Node():
 
         self.submod_file = submod_file
         self.node_status = NodeStatus.IDLE
+        self.tensor_id = '0_{}'.format(self.submod_file)#0
 
         self.averaged_params_buffer = {}
         self.average_no = 0
@@ -171,17 +172,46 @@ class Node():
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
 
+                    # print('gradient dict ', gradient_dict)
+                    # print('output tensors ', self.output_tensors)
+                    # print('input tensors: ', self.input_tensors)
+                    pass_grad_keys = []
                     for key, value in gradient_dict.items():
-                        if value.device.type != self.device:
-                            value = value.to(self.device)
+                        if self.output_tensors.get(key, None) is not None:
+                            if isinstance(value, list):
+                                for val in value:
+                                    if val.device.type != self.device:
+                                        val = val.to(self.device)
 
-                        output_tensor = self.output_tensors[key]
-                        if len(self.output_tensors) > 1:
-                            output_tensor.backward(value, retain_graph=True)
+                                    output_tensor = self.output_tensors[key]
+                                    # print('output tensor in val list: ', output_tensor)
+                                    if len(self.output_tensors) > 1 or len(value) > 1:
+                                        output_tensor.backward(val, retain_graph=True)
+                                    else:
+                                        output_tensor.backward(val)
+
+                                del self.output_tensors[key]
+
+                            else:
+                                if value.device.type != self.device:
+                                    value = value.to(self.device)
+
+                                output_tensor = self.output_tensors[key]
+                                # print('output tensor in not val list: ', output_tensor)
+
+                                if len(self.output_tensors) > 1:
+                                    output_tensor.backward(value, retain_graph=True)
+                                else:
+                                    output_tensor.backward(value)
+
+                                del self.output_tensors[key]
                         else:
-                            output_tensor.backward(value)
+                            pass_grad_keys.append(key)
 
-                        del self.output_tensors[key]
+                    # print('\n Param grads')
+                    # for param in self.model.parameters():
+                    #     if param.requires_grad:
+                    #         print(param.grad)
 
                     load_grads_into_optimizer(self.model, self.optimizer)
                     self.optimizer.step()
@@ -193,6 +223,19 @@ class Node():
                         #                         'forward_pass_id':forward_pass_id, 
                         #                         'data':gradients, 
                         #                         })
+                        # print('\n Gradients before: ', gradients)
+                        for pass_key in pass_grad_keys:
+                            if pass_key in gradients.keys():
+                                if isinstance(gradient_dict[pass_key], list):
+                                    gradient_dict[pass_key].append(gradients[pass_key])
+                                    gradients[pass_key] = gradient_dict[pass_key]
+                                else:
+                                    gradients[pass_key] = [gradient_dict[pass_key], gradients[pass_key]]
+                            else:
+                                gradients[pass_key] = gradient_dict[pass_key]
+
+                        # print('\n Gradients after: ', gradients)
+
                         sent_data = {'action':ActionTypes.BACKWARD,
                                     'forward_pass_id':forward_pass_id, 
                                     'data':gradients, 
@@ -266,10 +309,15 @@ class Node():
                     print('In find loss')
                     self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
-                    if hasattr(self.labels, '__iter__'):
-                        targets = next(itertools.islice(self.labels, data_id, None))[1]
-                    else:
+                    if isinstance(self.labels, torch.Tensor):
                         targets = self.labels[data_id:data_id+value['input_size']]
+                    else:
+                        targets = next(itertools.islice(self.labels, data_id, None))[1]
+
+                    # if hasattr(self.labels, '__iter__'):
+                    #     targets = next(itertools.islice(self.labels, data_id, None))[1]
+                    # else:
+                    #     targets = self.labels[data_id:data_id+value['input_size']]
                     
                     data = value['data']
 
@@ -282,10 +330,10 @@ class Node():
                         self.model.train()
 
                     outputs = self.model(*model_args.values())
-
-                    # loss = torch.nn.functional.mse_loss(outputs, targets)
+                    # print('\n Preds: ', outputs)
+                    loss = torch.nn.functional.mse_loss(outputs, targets)
                     # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
-                    loss = torch.nn.functional.cross_entropy(outputs,targets)
+                    # loss = torch.nn.functional.cross_entropy(outputs,targets)
 
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
@@ -443,14 +491,21 @@ class Node():
 
     
     def create_model_args(self, data, forward_pass_id=None):
-        # print('data received: ', data)
+        # print('\ndata received: ', data)
+        # print('\ninput templates: ', self.input_template)
         if self.node_type != NodeTypes.LEAF:
             model_args = []
             self.input_tensors[forward_pass_id] = {}
             for arg_pos, arg_metadata in self.input_template.items():
-                for k, v in arg_metadata.items(): 
+                for k, v in arg_metadata.items():
 
                     if isinstance(v, str) or isinstance(v, int):
+                        print(k, data.keys())
+                        if isinstance(v, int):
+                            arg_pos = v
+                        else:
+                            arg_pos = 0
+                        
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
 
@@ -499,6 +554,8 @@ class Node():
             for arg_pos, arg_metadata in self.input_template.items():
                 for k, v in arg_metadata.items():
                     if isinstance(v, str) or isinstance(v, int):
+                        if isinstance(v, int):
+                            arg_pos = v
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
 
@@ -534,6 +591,8 @@ class Node():
                         
                         if len(data[k]) == 0:
                             del data[k]
+        # print('\n model args: ', model_args)
+        # print('\ninput tensors: ', self.input_tensors)
         return model_args
 
     def create_no_grad_model_args(self, data):
@@ -590,6 +649,7 @@ class Node():
 
     def create_forward_payload(self, output, tensors=None):
         payload = self.output_template.copy()
+        # print('\npayload in forward payload ', payload, output)
         for k, v in payload.items():
             if isinstance(output, tuple):
                 out = output[k]
@@ -598,14 +658,15 @@ class Node():
             payload[k]['data'] = out
             payload[k]['tensor_id'] = self.tensor_id
             self.output_tensors[self.tensor_id] = out
-            self.tensor_id += 1
+            # self.tensor_id += 1
+            self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
 
         if self.node_type == NodeTypes.ROOT:
             payload['model_inputs'] = self.model_inputs_template
             for k, v in self.model_inputs_template.items():
                 if payload['model_inputs'][k].get('target', None) is not None:
                     payload['model_inputs'][k]['data'] = tensors[k]
-
+        # print('output tensors: ', self.output_tensors)
         return payload
 
     def create_no_grad_forward_payload(self, output, tensors=None):
