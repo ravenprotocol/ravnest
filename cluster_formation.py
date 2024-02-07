@@ -6,7 +6,11 @@ import random
 import numpy as np
 from cluster_node_operations.misc import *
 from cluster_node_operations.utils import *
-from torchvision.models import resnet50
+
+from models import CNN_Net
+# from sorter.mingpt.model_without_padding_mask import GPT
+# from sorter.split_model import SortDataset
+# from torchvision.models import resnet50
 
 random.seed(42)
 np.random.seed(42)
@@ -20,58 +24,20 @@ def delete_all_folders(path):
 path = 'node_data/'
 delete_all_folders(path)
 
-class Net(nn.Module):    
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv2d_1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=(3, 3), padding='same')
-        self.act_1 = nn.ReLU()
-        self.maxpool2d_1 = nn.MaxPool2d(kernel_size=(2, 2), stride=2)
-        self.drp_1 = nn.Dropout(0.25)
-        self.bn_1 = nn.BatchNorm2d(16)
-        self.maxpool2d_2 = nn.MaxPool2d(kernel_size=(2, 2), stride=2)
-        self.conv2d_2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(3, 3), padding='same')
-        self.act_2 = nn.ReLU()
-        self.maxpool2d_3 = nn.MaxPool2d(kernel_size=(2, 2), stride=2)
-        self.drp_2 = nn.Dropout(0.25)
-        self.bn_2 = nn.BatchNorm2d(32)
-        self.flatten = nn.Flatten()
-        self.dense_1 = nn.Linear(in_features=32,out_features=256)
-        self.act_3 = nn.ReLU()
-        self.drp_3 = nn.Dropout(0.4)
-        self.bn_3 = nn.BatchNorm1d(256)
-        self.dense_2 = nn.Linear(in_features=256, out_features=10)
-        self.act_4 = nn.Softmax(dim=-1)
+# For CNN Model    
+model = CNN_Net()
 
-    def forward(self, x):
-        out = self.conv2d_1(x)
-        out = self.act_1(out)
-        out = self.maxpool2d_1(out)
-        out = self.drp_1(out)
-        out = self.bn_1(out)
-        # print(out.shape)
-
-        out = self.maxpool2d_2(out)
-        # print(out.shape)
-
-        out = self.conv2d_2(out)
-        out = self.act_2(out)
-        out = self.maxpool2d_3(out)
-        # print(out.shape)
-
-        out = self.drp_2(out)
-        out = self.bn_2(out)
-        # print(out.shape)
-        out = self.flatten(out)
-        out = self.dense_1(out)
-        out = self.act_3(out)
-        out = self.drp_3(out)
-        out = self.bn_3(out)
-        out = self.dense_2(out)
-        out = self.act_4(out)
-        return out
-    
-model = Net()
+## For ResNET 50 Model
 # model = resnet50()
+
+## For Sorter Model
+# train_dataset = SortDataset('train')
+# test_dataset = SortDataset('test')
+# model_config = GPT.get_default_config()
+# model_config.model_type = 'gpt-nano'
+# model_config.vocab_size = train_dataset.get_vocab_size()
+# model_config.block_size = train_dataset.get_block_size()
+# model = GPT(model_config)
 
 node_pool = spawn_node_pool(mode='load_from_configs')
 

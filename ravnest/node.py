@@ -328,7 +328,10 @@ class Node():
                     outputs = self.model(*model_args.values())
                     
                     loss = self.criterion(outputs, targets)
-
+                    
+                    # For training Sorter use the following loss:
+                    # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+    
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
                     loss.backward()

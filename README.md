@@ -23,21 +23,21 @@ Generate the submodel files:
 python cluster_formation.py
 ```
 
-Order of Execution of Clients (in 3 terminals):
+Execution of Clients (in 3 terminals):
 ```bash
-python sorter_client_2.py
+python cnn_client_0.py
 ```
 ```bash
-python sorter_client_1.py
+python cnn_client_1.py
 ```
 ```bash
-python sorter_client_0.py
+python cnn_client_2.py
 ```
 
-To run infernce on test input:
+<!-- To run infernce on test input:
 ```bash
 python sorter_inference.py
-```
+``` -->
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 
 ### Citation

@@ -1,5 +1,6 @@
 import torch
 from ravnest.node import Node
+from ravnest.utils import load_node_json_configs
 import time
 import numpy as np
 import random
@@ -24,22 +25,24 @@ with open('sorter/sorter_data/X_train.pkl', 'rb') as fout_X:
 with open('sorter/sorter_data/y_train.pkl', 'rb') as fout_y:   
     y_train = pickle.load(fout_y)
 
-# print('X_train: ', X_train[:5])
-# print('y_train: ', y_train[:5])
-
-
-model = torch.jit.load('sorter/submod_0.pt')
-
-# print('Model: ', model)
-
-host = '0.0.0.0'
-port = 8080
 
 if __name__ == '__main__':
-    node = Node(name='n0', template_path='sorter/templates', submod_file='submod_0', local_host=host, local_port=port, model=model, optimizer=torch.optim.Adam, forward_target_host='0.0.0.0', forward_target_port=8081)
+
+    node_name = 'node_0'
+
+    node_metadata = load_node_json_configs(node_name=node_name)
+    model = torch.jit.load(node_metadata['template_path']+'submod.pt')
+    optimizer=torch.optim.Adam
+    
+    node = Node(name = node_name, 
+                model = model, 
+                optimizer = optimizer,
+                **node_metadata
+                )
     node.start()
+
     batch_size = 64
-    epochs = 10
+    epochs = 1
     t1 = time.time()
     n_forwards = 0
 
