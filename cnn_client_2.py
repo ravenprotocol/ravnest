@@ -3,8 +3,18 @@ import numpy as np
 import time
 from sklearn import datasets
 from ravnest.node import Node
+from ravnest.utils import load_node_json_configs
 from sklearn.model_selection import train_test_split
-import _pickle as cPickle
+
+def batch_iterator(X, y=None, batch_size=64):
+    """ Simple batch generator """
+    n_samples = X.shape[0]
+    for i in np.arange(0, n_samples, batch_size):
+        begin, end = i, min(i+batch_size, n_samples)
+        if y is not None:
+            yield X[begin:end], y[begin:end]
+        else:
+            yield X[begin:end]
 
 def to_categorical(x, n_col=None):
     if not n_col:
@@ -12,7 +22,6 @@ def to_categorical(x, n_col=None):
     one_hot = np.zeros((x.shape[0], n_col))
     one_hot[np.arange(x.shape[0]), x] = 1
     return one_hot
-
 
 def get_dataset():
     data = datasets.load_digits()
@@ -32,14 +41,24 @@ def get_dataset():
 
 X, X_test, y, y_test = get_dataset()
 
-host = '0.0.0.0'
-port = 8082
-model = torch.jit.load('cnn/submod_2.pt')
-# optimizer = torch.optim.Adam(model.parameters())
-
 if __name__ == '__main__':
-    node = Node(name='n2', template_path='cnn/templates', submod_file='submod_2', local_host=host, local_port=port, labels=torch.tensor(y, dtype=torch.float32), test_labels = y_test, model=model, optimizer=torch.optim.Adam, backward_target_host='0.0.0.0', backward_target_port=8081)
+    
+    node_name = 'node_2'
 
-    node.start()
+    node_metadata = load_node_json_configs(node_name=node_name)
+    model = torch.jit.load(node_metadata['template_path']+'submod.pt')
+    optimizer=torch.optim.Adam
+    criterion = torch.nn.functional.mse_loss
+
+    node = Node(name = node_name, 
+                model = model, 
+                optimizer = optimizer,
+                criterion = criterion, 
+                labels = torch.tensor(y, dtype=torch.float32), 
+                test_labels=y_test,
+                **node_metadata
+                )
+    
+    node.start()    
     while True:
         time.sleep(1)

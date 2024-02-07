@@ -6,6 +6,7 @@ import random
 import numpy as np
 from cluster_node_operations.misc import *
 from cluster_node_operations.utils import *
+from torchvision.models import resnet50
 
 random.seed(42)
 np.random.seed(42)
@@ -70,6 +71,7 @@ class Net(nn.Module):
         return out
     
 model = Net()
+# model = resnet50()
 
 node_pool = spawn_node_pool(mode='load_from_configs')
 
@@ -79,12 +81,27 @@ for node in node_pool:
     node_path = 'node_data/cluster_{}/{}'.format(node.cluster_id, node.address)
     if not os.path.exists(node_path):
         os.makedirs(node_path)
+    if not os.path.exists('node_data/nodes'):
+        os.makedirs('node_data/nodes')
 
 for cluster in cluster_pool:
     model_input_node = cluster.nodes[list(cluster.nodes.keys())[0]].address
     cluster_node_ip_addresses = []
     for node_id, metadata in cluster.nodes.items():
         cluster_node_ip_addresses.append(metadata.address)
+    
+    for i in range(len(cluster_node_ip_addresses)):
+        for node in node_pool:
+            if node.address == cluster_node_ip_addresses[i]:
+                current_node = node
+                break
+        if i < len(cluster_node_ip_addresses) - 1:
+            current_node.forward_target_host = cluster_node_ip_addresses[i+1].split(':')[0]
+            current_node.forward_target_port = cluster_node_ip_addresses[i+1].split(':')[1]
+        if i > 0 and i < len(cluster_node_ip_addresses):
+            current_node.backward_target_host = cluster_node_ip_addresses[i-1].split(':')[0]
+            current_node.backward_target_port = cluster_node_ip_addresses[i-1].split(':')[1]
+
     split_model_equal(model=model,
                       num_splits=len(cluster.nodes), 
                       cluster_path='node_data/cluster_{}'.format(cluster.cid), 
@@ -93,7 +110,7 @@ for cluster in cluster_pool:
     
 for node in node_pool:
     node.set_submodel()
-    print('\n Node id: ', node.node_id, ' params: ', node.submodel.state_dict().keys())
+    # print('\n Node id: ', node.node_id, ' params: ', node.submodel.state_dict().keys())
 
 max_c = None
 max_l = 0
@@ -110,13 +127,8 @@ for nid, node in max_c.nodes.items():
     rid += 1
 
 max_c.set_ringwise_params()
-print('For max_c: ', max_c.cid)
-for nid,node in max_c.nodes.items():
-    print('node id: ', node.node_id, node.ring_ids)
 
-print('maxc all param to ring')
-print(max_c.all_param_to_ring)
-
+max_ring_size = {} 
 for cluster in cluster_pool:
     if cluster.cid != max_c.cid:
         for nid, node in cluster.nodes.items():
@@ -127,8 +139,12 @@ for cluster in cluster_pool:
                     node.ring_ids[max_c.all_param_to_ring[k]] = k
                     current_ring_id = max_c.all_param_to_ring[k]
 
-    print('\nRing ids cid: ', cluster.cid)
-    print([node.ring_ids for _,node in cluster.nodes.items()])  
+    for _,node in cluster.nodes.items():
+        print(node.ring_ids)
+        for key in node.ring_ids:
+            max_ring_size[key] = max_ring_size.get(key, 0) + 1
+    
+max_ring_size_value = max(max_ring_size.values())
 
 for cl in range(len(cluster_pool)):
     cluster = cluster_pool[cl]
@@ -140,17 +156,29 @@ for cl in range(len(cluster_pool)):
     for nid, node in cluster.nodes.items():
         current_address = None
         for k in node.trainable_param_keys:
-            # print(k)
             for n_nid, n_node in next_cluster.nodes.items():
                 if k in n_node.trainable_param_keys:
-                    # print(current_address, n.address)
                     if current_address != n_node.address:
                         node.address_to_param[n_node.address] = k
                         current_address = n_node.address
     
-    print('\nCluster addresses for cid: ', cluster.cid)
-    print([node.address_to_param for _,node in cluster.nodes.items()])
-
 print(node_pool)
-
 print(cluster_pool)
+
+for node in node_pool:
+    node_meta = {}
+    node_meta['node_id'] = node.node_id
+    node_meta['local_host'] = node.address.split(':')[0]
+    node_meta['local_port'] = int(node.address.split(':')[1])
+    node_meta['template_path'] = 'node_data/cluster_{}/{}/'.format(node.cluster_id, node.address)
+    node_meta['rank'] = node.cluster_id
+    node_meta['ring_size'] = max_ring_size_value
+    node_meta['param_addresses'] = node.address_to_param,
+    node_meta['ring_ids'] = {int(key): value for key, value in node.ring_ids.items()}
+    node_meta['forward_target_host'] = node.forward_target_host
+    node_meta['forward_target_port'] = int(node.forward_target_port) if node.forward_target_port is not None else None
+    node_meta['backward_target_host'] = node.backward_target_host
+    node_meta['backward_target_port'] = int(node.backward_target_port) if node.backward_target_port is not None else None
+
+    with open('node_data/nodes/node_{}.json'.format(node.node_id), 'w') as fp:
+        json.dump(node_meta, fp)

@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import os
+import json
 import threading
 import uuid
 import concurrent.futures._base as base
@@ -100,3 +101,21 @@ def load_state_dict_conserve_versions(model, state_dict):
     model_state_dict = model.state_dict(keep_vars=True)
     for k, v in state_dict.items():
         model_state_dict[k].data = v.data
+
+def load_node_json_configs(node_name=None):
+    with open('node_data/nodes/{}.json'.format(node_name)) as f:
+        data = f.read()
+    parsed_json = json.loads(data)
+    
+    submod_file = None
+    dir_files = os.listdir(parsed_json['template_path'])
+    for file in dir_files:
+        if 'submod_' in file:
+            file_name_parts = file.split('_')
+            submod_file = '_'.join(file_name_parts[:2])
+    
+    parsed_json['submod_file'] = submod_file
+    parsed_json['param_addresses'] = parsed_json['param_addresses'][0]
+    parsed_json['ring_ids'] = {int(key): value for key, value in parsed_json['ring_ids'].items()}
+    
+    return parsed_json

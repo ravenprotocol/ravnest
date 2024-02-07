@@ -3,6 +3,7 @@ import numpy as np
 import time
 from sklearn import datasets
 from ravnest.node import Node
+from ravnest.utils import load_node_json_configs
 from sklearn.model_selection import train_test_split
 import time
 
@@ -23,7 +24,6 @@ def to_categorical(x, n_col=None):
     one_hot[np.arange(x.shape[0]), x] = 1
     return one_hot
 
-
 def get_dataset():
     data = datasets.load_digits()
     X = data.data
@@ -41,15 +41,20 @@ def get_dataset():
     return X_train, X_test, y_train, y_test
 
 X, X_test, y, y_test = get_dataset()
-# model = torch.jit.load('cnn/submod_0.pt')
-node_path = 'node_data/cluster_0/192.128.30.90:8080/'
-model = torch.jit.load(node_path+'submod.pt')
-
-host = '0.0.0.0'
-port = 8080
 
 if __name__ == '__main__':
-    node = Node(name='n0', template_path=node_path, submod_file='submod_0', local_host=host, local_port=port, model=model, optimizer=torch.optim.Adam, forward_target_host='0.0.0.0', forward_target_port=8081)
+
+    node_name = 'node_0'
+
+    node_metadata = load_node_json_configs(node_name=node_name)
+    model = torch.jit.load(node_metadata['template_path']+'submod.pt')
+    optimizer=torch.optim.Adam
+    
+    node = Node(name = node_name, 
+                model = model, 
+                optimizer = optimizer,
+                **node_metadata
+                )
     node.start()
     batch_size = 64
     epochs = 100
@@ -57,6 +62,7 @@ if __name__ == '__main__':
     t1 = time.time()
     n_forwards = 0
 
+    time.sleep(3)
 
     for epoch in range(epochs):
         data_id = 0
@@ -67,7 +73,7 @@ if __name__ == '__main__':
             n_forwards += 1
             # print('Data id: ', data_id)
             
-            data_id += batch_size
+            data_id += batch_size#1
             # break
             # if data_id>256:
             #     break
@@ -82,6 +88,6 @@ if __name__ == '__main__':
     
     pred = node.no_grad_forward_compute(tensors=torch.tensor(X_test, dtype=torch.float32), output_type='accuracy')
 
-    
-
+    while True:
+        time.sleep(1)
 

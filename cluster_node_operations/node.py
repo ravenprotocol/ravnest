@@ -11,6 +11,10 @@ class Node:
         self.split_quota = None
         self.cluster_id = None
         self.trainable_param_keys = []
+        self.forward_target_host = None
+        self.forward_target_port = None
+        self.backward_target_host = None
+        self.backward_target_port = None
 
     def set_submodel(self):
         self.submodel = torch.jit.load('node_data/cluster_{}/{}/submod.pt'.format(self.cluster_id, self.address))

@@ -17,21 +17,15 @@ from protos.server_pb2_grpc import add_CommServerServicer_to_server, CommServerS
 from protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration
 
 class Node():
-    def __init__(self, name=None,
-                 submod_file=None, template_path=None,
-                 local_host=None, local_port=None,
-                 forward_target_host=None, forward_target_port=None,
-                 backward_target_host=None, backward_target_port=None, 
-                 model=None, optimizer=None, labels=None, test_labels=None,
-                 ring_ids=None, rank=None, ring_size = None, param_addresses = None, device = 'cpu'
-                 ):
+    def __init__(self, name=None, model=None, optimizer=None, criterion=None, 
+                 labels=None, test_labels=None, device = 'cpu', **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
         self.reduce_lock = mp.Lock()
         self.gather_lock = mp.Lock()
 
-        self.local_address = '{}:{}'.format(local_host, local_port)
+        self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
         self.name = name
 
         self.model = model
@@ -47,16 +41,16 @@ class Node():
         self.reduce_iteration = self.manager.dict()
         self.gather_iteration = self.manager.dict()
 
-        if ring_ids is not None:
-            self.ring_ids = ring_ids
+        if kwargs.get('ring_ids', None) is not None:
+            self.ring_ids = kwargs.get('ring_ids', None)
 
             for ring_id, _ in self.ring_ids.items():
                 self.reduce_iteration[ring_id] = 0
                 self.gather_iteration[ring_id] = 0
             print('ring ids: ', self.ring_ids)
 
-        self.rank = rank
-        self.ring_size = ring_size
+        self.rank = kwargs.get('rank', None)
+        self.ring_size = kwargs.get('ring_size', None)
         
         self.ring_param_keys = {}
         # self.data_dict = data_dict
@@ -72,6 +66,7 @@ class Node():
             self.ring_param_keys[ring[0]] = keys
 
         self.param_address_mapping = {}
+        param_addresses = kwargs.get('param_addresses', None)
         for i, address_to_param in enumerate(param_addresses.items()):
             if i < len(param_addresses) - 1:
                 keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):data_dict_keys.index(param_addresses[list(param_addresses.keys())[i+1]])]
@@ -82,12 +77,13 @@ class Node():
                 self.param_address_mapping[param_name] = address_to_param[0]
 
         # self.send_buffer = []
+        self.criterion = criterion
         self.labels = labels
         self.test_labels = test_labels
-        self.forward_target_host = forward_target_host
-        self.forward_target_port = forward_target_port
-        self.backward_target_host = backward_target_host
-        self.backward_target_port = backward_target_port
+        self.forward_target_host = kwargs.get('forward_target_host', None)
+        self.forward_target_port = kwargs.get('forward_target_port', None)
+        self.backward_target_host = kwargs.get('backward_target_host', None)
+        self.backward_target_port = kwargs.get('backward_target_port', None)
 
         self.output_tensors = {}
         self.input_tensors = {}
@@ -96,22 +92,22 @@ class Node():
 
         self.reduce_threshold = 8
 
-        self.submod_file = submod_file
+        self.submod_file = kwargs.get('submod_file', None)
         self.node_status = NodeStatus.IDLE
         self.tensor_id = '0_{}'.format(self.submod_file)#0
 
         self.averaged_params_buffer = {}
         self.average_no = 0
 
-        if submod_file is not None:
-            with open('{}{}_input.pkl'.format(template_path, submod_file), 'rb') as fout:
+        if kwargs.get('submod_file', None) is not None:
+            with open('{}{}_input.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
                 self.input_template = pickle.load(fout)
-            with open('{}{}_output.pkl'.format(template_path, submod_file), 'rb') as fout:
+            with open('{}{}_output.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
                 self.output_template = pickle.load(fout)
             print(self.input_template)
             if self.backward_target_host is None and self.backward_target_port is None:
                 self.node_type = NodeTypes.ROOT
-                with open('{}model_inputs.pkl'.format(template_path), 'rb') as fout:
+                with open('{}model_inputs.pkl'.format(kwargs.get('template_path', None)), 'rb') as fout:
                     self.model_inputs_template = pickle.load(fout)
                 self.optimizer = optimizer(current_model_params_clone(self.model))
             elif self.forward_target_host is None and self.forward_target_port is None:
@@ -330,10 +326,8 @@ class Node():
                         self.model.train()
 
                     outputs = self.model(*model_args.values())
-                    # print('\n Preds: ', outputs)
-                    loss = torch.nn.functional.mse_loss(outputs, targets)
-                    # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
-                    # loss = torch.nn.functional.cross_entropy(outputs,targets)
+                    
+                    loss = self.criterion(outputs, targets)
 
                     self.model.zero_grad()
                     self.optimizer.zero_grad()
@@ -556,6 +550,8 @@ class Node():
                     if isinstance(v, str) or isinstance(v, int):
                         if isinstance(v, int):
                             arg_pos = v
+                        else:
+                            arg_pos = 0
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
 
@@ -600,6 +596,10 @@ class Node():
         for arg_pos, arg_metadata in self.input_template.items():
             for k, v in arg_metadata.items():                 
                 if isinstance(v, str) or isinstance(v, int):
+                    if isinstance(v, int):
+                        arg_pos = v
+                    else:
+                        arg_pos = 0
                     if self.submod_file in data[k][arg_pos]['target']:
 
                         if data[k][arg_pos]['data'].device.type != self.device:
