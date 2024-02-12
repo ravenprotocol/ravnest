@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 import glob
 from pkg_resources import parse_requirements
@@ -7,7 +9,11 @@ from setuptools.command.build_py import build_py
 this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
 def proto_compile(output_path=this_directory):
+    install("grpcio-tools==1.51.3")
     import grpc_tools.protoc
 
     cli_args = [
@@ -41,6 +47,5 @@ setup(
     long_description_content_type='text/markdown',
     url='https://github.com/ravenprotocol/ravnest',
     keywords='deep learning, distributed computing, decentralized training',
-    install_requires=install_requires,
-    setup_requires=["grpcio-tools"]
+    install_requires=install_requires
 )
