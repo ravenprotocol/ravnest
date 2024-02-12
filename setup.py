@@ -16,7 +16,7 @@ def install_package(package):
 def proto_compile(output_path=this_directory):
     install_package("grpcio-tools==1.51.3")
     import grpc_tools.protoc
-
+    print('Output Path: ', output_path)
     cli_args = [
         "grpc_tools.protoc",
         "--proto_path=ravnest/protos",
@@ -24,7 +24,7 @@ def proto_compile(output_path=this_directory):
         "--pyi_out={}/ravnest/protos".format(output_path),
         "--grpc_python_out={}/ravnest/protos".format(output_path),
     ] + glob.glob("ravnest/protos/*.proto")
-
+    print('GLOB: ', glob.glob("ravnest/protos/*.proto"))
     code = grpc_tools.protoc.main(cli_args)
     
 
