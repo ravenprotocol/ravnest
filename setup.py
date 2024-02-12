@@ -43,6 +43,7 @@ setup(
     author="Raven Protocol",
     author_email='kailash@ravenprotocol.com',
     packages=find_packages(),
+    package_data={"ravnest":["protos/*"]},
     long_description=long_description,
     long_description_content_type='text/markdown',
     url='https://github.com/ravenprotocol/ravnest',
