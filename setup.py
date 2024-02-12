@@ -31,7 +31,7 @@ def proto_compile(output_path=this_directory):
 class CustomInstallCommand(install):
     def run(self):
         proto_compile(this_directory)
-        install.run(self)
+        super().run()
 
 class Develop(develop):
     def run(self):
