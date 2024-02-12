@@ -35,6 +35,7 @@ class BuildPy(build_py):
 
 class Develop(develop):
     def run(self):
+        self.reinitialize_command("build_py")
         self.run_command("build_py")
         super().run()
 
