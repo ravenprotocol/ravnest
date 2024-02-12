@@ -4,7 +4,7 @@ from pathlib import Path
 import glob
 from pkg_resources import parse_requirements
 from setuptools import setup, find_packages
-from setuptools.command.build_py import build_py
+from setuptools.command.install import install
 from setuptools.command.develop import develop
 
 this_directory = Path(__file__).parent
@@ -28,10 +28,10 @@ def proto_compile(output_path=this_directory):
     code = grpc_tools.protoc.main(cli_args)
     
 
-class BuildPy(build_py):
+class CustomInstallCommand(install):
     def run(self):
-        super(BuildPy, self).run()
         proto_compile(this_directory)
+        install.run(self)
 
 class Develop(develop):
     def run(self):
@@ -46,7 +46,7 @@ with open("requirements.txt") as requirements_file:
 setup(
     name="ravnest",
     version="0.1.0",
-    cmdclass={"build_py":BuildPy, "develop":Develop},
+    cmdclass={"install":CustomInstallCommand, "develop":Develop},
     license='MIT',
     author="Raven Protocol",
     author_email='kailash@ravenprotocol.com',
