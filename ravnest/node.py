@@ -9,12 +9,12 @@ import itertools
 import psutil
 import pickle
 import time
-from ravnest.utils import *
-from ravnest.strings import *
-from ravnest.endpoints import GrpcService
+from .utils import *
+from .strings import *
+from .endpoints import GrpcService
 
-from protos.server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
-from protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration
+from .protos.server_pb2_grpc import add_CommServerServicer_to_server, CommServerStub
+from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, criterion=None, 

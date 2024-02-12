@@ -4,8 +4,7 @@ import json
 import shutil
 import random
 import numpy as np
-from cluster_node_operations.misc import *
-from cluster_node_operations.utils import *
+from ravnest.operations.utils import *
 
 from models import CNN_Net
 # from sorter.mingpt.model_without_padding_mask import GPT

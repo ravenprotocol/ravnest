@@ -1,17 +1,11 @@
-import multiprocessing as mp
 import os
 import json
-import threading
-import uuid
-import concurrent.futures._base as base
-from concurrent.futures._base import Future
-import weakref
 import torch
 import asyncio
 import _pickle as cPickle
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
-from protos.tensor_pb2 import TensorChunk, SendTensor
-from protos.server_pb2 import ReduceChunk, DataChunk
+from .protos.tensor_pb2 import TensorChunk, SendTensor
+from .protos.server_pb2 import ReduceChunk, DataChunk
 
 T = TypeVar("T")
 

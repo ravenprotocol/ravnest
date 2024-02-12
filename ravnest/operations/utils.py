@@ -1,5 +1,4 @@
 import torch
-from torch import nn
 import pickle
 from pip._internal.operations.freeze import freeze
 
@@ -7,9 +6,9 @@ from torch.fx import Tracer
 from pippy.IR import Pipe
 from pippy import split_into_equal_size
 
-from cluster_node_operations.genetic import *
-from cluster_node_operations.cluster import Cluster
-from cluster_node_operations.node import Node
+from .genetic import genetic_algorithm
+from .cluster import Cluster
+from .node import Node
 import numpy as np
 import random
 import json
@@ -38,23 +37,6 @@ def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_vari
                         benchmarks=benchmarks)
             node_pool.append(node)
     return node_pool
-
-def configure_clusters(max_attempts=5, num_nodes=None, full_model_size=None, ram_variants=None, bandwidth_variants=None):
-    for attempt in range(max_attempts):
-        try:
-            node_pool = spawn_node_pool(num_nodes=num_nodes, ram_variants=ram_variants, bandwidth_variants=bandwidth_variants)
-            cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool)
-            formed_rings = form_rings(cluster_pool=cluster_pool)
-            assigned_connection_targets = assign_connection_targets(cluster_pool=cluster_pool)
-
-            if assigned_connection_targets is not None:  # Check if the function converged
-                return node_pool, cluster_pool, formed_rings, assigned_connection_targets
-        except Exception as e:
-            print(f"An error occurred: {e}. Retrying...")
-            # Optional: Handle specific exceptions if needed
-    print(f"Failed to converge after {max_attempts} attempts.")
-    return None  # or handle this case as needed
-
 
 def cluster_formation(full_model_size, node_pool):
     prelim_clusters = genetic_algorithm(node_pool, full_model_size)
@@ -122,60 +104,6 @@ def view_individual_cluster_details(cluster_pool):
                                                             cluster.total_speed
                                                             ))
         
-def form_rings(cluster_pool):
-    temp_splits = [cluster.splits for cluster in cluster_pool]
-    splits = copy.deepcopy(temp_splits)
-    original_splits = copy.deepcopy(splits)
-    splits_copy = copy.deepcopy(splits)
-    max_rings = max(len(split) for split in splits_copy)
-    print('\nMax rings: ', max_rings)
-    for ring_id in range(max_rings):
-        min_node_size = min([split[ring_id] for split in splits_copy])
-        for cl in range(len(splits_copy)):
-            if splits_copy[cl][ring_id] > min_node_size:
-                diff = splits_copy[cl][ring_id] - min_node_size
-                my_split = splits[cl]
-                if ring_id < len(splits[cl]) - 1:
-                    my_split[ring_id] = my_split[ring_id] - diff
-                    my_split[ring_id + 1] = my_split[ring_id + 1] + diff
-                elif ring_id == len(splits[cl]) - 1:
-                    t = my_split[ring_id]
-                    my_split[ring_id] = t - diff
-                    my_split.append(diff)
-                splits[cl] = my_split
-                splits_copy[cl] = my_split
-
-    localized_rings = []
-    continuous_rings = []
-
-    for cl in range(len(splits_copy)):
-        continuous_rep, local_rep = representation_converter(cluster_split=splits_copy[cl], target_split=original_splits[cl])
-        localized_rings.append(local_rep)
-        continuous_rings.append(continuous_rep)
-
-    # print('\nLocalized Ring Output: ')
-    # for local_rep in localized_rings:
-    #     print(local_rep)
-
-    # print('\nContinuous Ring Output: ')
-    # for continuous_rep in continuous_rings:
-    #     print(continuous_rep)
-
-    for cl in range(len(cluster_pool)):
-        cluster_pool[cl].ring_id_mapping = continuous_rings[cl]
-        r = 0
-        for nid, node in cluster_pool[cl].nodes.items():
-            node.ring_id_to_param_mapping = continuous_rings[cl][r]
-            r += 1
-        
-    # for cl in range(len(cluster_pool)):
-    #     cluster_pool[cl].ring_id_mapping = localized_rings[cl]
-    #     r = 0
-    #     for nid, node in cluster_pool[cl].nodes.items():
-    #         node.ring_id_to_param_mapping = localized_rings[cl][r]
-    #         r += 1
-        
-    return 
 
 def assign_connection_targets(cluster_pool):
     temp_splits = [cluster.splits for cluster in cluster_pool]
@@ -382,38 +310,3 @@ def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths
         print('{}/{}/{}.pt'.format(cluster_path, node_paths[int(k)], key))
         script.save('{}/{}/submod.pt'.format(cluster_path, node_paths[int(k)]))
 
-
-def simple_assign_connection_targets(cluster_pool):
-    temp_splits = [cluster.splits for cluster in cluster_pool]
-    splits = copy.deepcopy(temp_splits)
-    copy_splits = copy.deepcopy(splits)
-
-    for cl in range(len(copy_splits)):
-        if cl == len(copy_splits) - 1:
-            continuous_mapping, _ = representation_converter(cluster_split=copy_splits[0],target_split=copy_splits[cl])
-        else:
-            continuous_mapping, _ = representation_converter(cluster_split=copy_splits[cl + 1],target_split=copy_splits[cl])
-        cluster_pool[cl].inter_cluster_node_address_mappings = _#continuous_mapping
-                
-    for cl in range(len(cluster_pool)):
-        current_cluster = cluster_pool[cl]
-        if cl == len(cluster_pool) - 1:
-            next_cluster = cluster_pool[0]
-        else:
-            next_cluster = cluster_pool[cl + 1]
-        
-        address_param_mapping_list = []
-        for nid_param_mapping in current_cluster.inter_cluster_node_address_mappings:
-            address_param_mapping = copy.deepcopy(nid_param_mapping)
-            for cid, param_idx in nid_param_mapping.items():
-                actual_nid = list(next_cluster.nodes.keys())[cid]
-                del address_param_mapping[cid]
-                address_param_mapping[next_cluster.nodes[actual_nid].ip_address] = param_idx
-            address_param_mapping_list.append(address_param_mapping)
-        current_cluster.inter_cluster_node_address_mappings = address_param_mapping_list
-
-    for cl in range(len(cluster_pool)):
-        current_cluster = cluster_pool[cl]
-        cluster_ip_map = current_cluster.inter_cluster_node_address_mappings
-        for nid, node in current_cluster.nodes.items():
-            node.next_cluster_target_node_ip_to_param_mapping = cluster_ip_map[list(current_cluster.nodes.keys()).index(nid)]

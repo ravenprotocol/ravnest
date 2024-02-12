@@ -1,5 +1,4 @@
 import torch
-from cluster_node_operations.misc import get_trainable_parameters
 
 class Node:
     def __init__(self, node_id=None, address=None, benchmarks=None) -> None:
@@ -33,11 +32,3 @@ class Node:
                                                                 self.cluster_id, 
                                                                 self.address, self.ring_ids, self.address_to_param)
 
-@torch.no_grad()
-def get_trainable_parameters(model):
-    # print("Trainable Parameters:")
-    data_dict = {}
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            data_dict[name] = param
-    return data_dict

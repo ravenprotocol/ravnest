@@ -1,10 +1,7 @@
-from protos.server_pb2_grpc import CommServer
-from protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk, CheckReduceIteration, CheckGatherIteration, ReduceIterationReply, GatherIterationReply
-from protos.tensor_pb2 import SendTensor, SendTensorReply
+from .protos.server_pb2_grpc import CommServer
+from .protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk, CheckReduceIteration, CheckGatherIteration, ReduceIterationReply, GatherIterationReply
+from .protos.tensor_pb2 import SendTensor, SendTensorReply
 
-import multiprocessing as mp
-from typing import AsyncIterator
-from ravnest.utils import aiter_with_timeout
 import _pickle as cPickle
 
 class GrpcService(CommServer):

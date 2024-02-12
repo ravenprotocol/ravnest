@@ -1,14 +1,24 @@
-from .mingpt.model_without_padding_mask import GPT
 import torch
 from torch.utils.data import Dataset
 import pickle
 import torch
-from torch.fx import Tracer
 import numpy as np
 import _pickle as cPickle
 import random
-from pippy.IR import annotate_split_points, PipeSplitWrapper, Pipe
-from pippy import split_into_equal_size
+
+"""
+The following code is based on the minGPT repo by Andrej Karpathy:
+https://github.com/karpathy/minGPT
+
+Full definition of a GPT Language Model, all of it in this single file.
+
+References:
+1) the official GPT-2 TensorFlow implementation released by OpenAI:
+https://github.com/openai/gpt-2/blob/master/src/model.py
+2) huggingface/transformers PyTorch implementation:
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+"""
+
 
 class SortDataset(Dataset):
     """ 
