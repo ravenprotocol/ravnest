@@ -4,7 +4,9 @@ from pathlib import Path
 import glob
 from pkg_resources import parse_requirements
 from setuptools import setup, find_packages
-# from setuptools.command.install import install
+from setuptools.command.install import install
+from setuptools.command.develop import develop
+from setuptools.command.egg_info import egg_info
 from setuptools.command.build_py import build_py
 
 this_directory = Path(__file__).parent
@@ -28,13 +30,25 @@ def proto_compile(output_path=this_directory):
     code = grpc_tools.protoc.main(cli_args)
     
 
-class CustomInstallCommand(build_py):
+class CustomInstallCommand(install):
     def run(self):
-        print('Before')
         super().run()
-        print('After')
         proto_compile(this_directory)
-        
+
+class CustomDevelopCommand(develop):
+    def run(self):
+        super().run()
+        proto_compile(this_directory) 
+
+class CustomBuildpyCommand(build_py):
+    def run(self):
+        super().run()
+        proto_compile(this_directory)       
+
+class CustomEggInfoCommand(egg_info):
+    def run(self):
+        super().run()
+        proto_compile(this_directory)
 
 with open("requirements.txt") as requirements_file:
     install_requires = list(map(str, parse_requirements(requirements_file)))
@@ -42,7 +56,10 @@ with open("requirements.txt") as requirements_file:
 setup(
     name="ravnest",
     version="0.1.0",
-    cmdclass={"build_py":CustomInstallCommand},
+    cmdclass={"install":CustomInstallCommand, 
+              "build_py":CustomBuildpyCommand,
+              "develop":CustomDevelopCommand,
+              "egg_info":CustomEggInfoCommand},
     license='MIT',
     author="Raven Protocol",
     author_email='kailash@ravenprotocol.com',
