@@ -42,5 +42,5 @@ setup(
     url='https://github.com/ravenprotocol/ravnest',
     keywords='deep learning, distributed computing, decentralized training',
     install_requires=install_requires,
-    setup_requires=["grpcio-tools==1.51.3"]
+    setup_requires=["grpcio-tools"]
 )
