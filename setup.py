@@ -5,6 +5,7 @@ import glob
 from pkg_resources import parse_requirements
 from setuptools import setup, find_packages
 from setuptools.command.build_py import build_py
+from setuptools.command.develop import develop
 
 this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
@@ -32,6 +33,11 @@ class BuildPy(build_py):
         super(BuildPy, self).run()
         proto_compile(this_directory)
 
+class Develop(develop):
+    def run(self):
+        self.run_command("build_py")
+        super().run()
+
 
 with open("requirements.txt") as requirements_file:
     install_requires = list(map(str, parse_requirements(requirements_file)))
@@ -39,7 +45,7 @@ with open("requirements.txt") as requirements_file:
 setup(
     name="ravnest",
     version="0.1.0",
-    cmdclass={"build_py":BuildPy},
+    cmdclass={"build_py":BuildPy, "develop":Develop},
     license='MIT',
     author="Raven Protocol",
     author_email='kailash@ravenprotocol.com',
