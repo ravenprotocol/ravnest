@@ -15,21 +15,21 @@ def install(package):
 def proto_compile(output_path=this_directory):
     install("grpcio-tools==1.51.3")
     import grpc_tools.protoc
-    print('This Directory: ', this_directory)
+
     cli_args = [
         "grpc_tools.protoc",
-        "--python_out={}".format(output_path),
-        "--pyi_out={}".format(output_path),
-        "--grpc_python_out={}".format(output_path),
-    ] + glob.glob("protos/*.proto")
-    print('CLI_ARGS: ', cli_args)
+        "--proto_path=ravnest/protos",
+        "--python_out={}/ravnest/protos".format(output_path),
+        "--pyi_out={}/ravnest/protos".format(output_path),
+        "--grpc_python_out={}/ravnest/protos".format(output_path),
+    ] + glob.glob("ravnest/protos/*.proto")
 
     code = grpc_tools.protoc.main(cli_args)
     
 
 class BuildPy(build_py):
     def run(self):
-        super().run()
+        super(BuildPy, self).run()
         proto_compile(this_directory)
 
 

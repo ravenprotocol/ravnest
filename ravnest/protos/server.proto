@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-import "protos/tensor.proto";
+import "tensor.proto";
 
 service CommServer {
   rpc send_buffer (stream SendTensor) returns (SendTensorReply) {}
