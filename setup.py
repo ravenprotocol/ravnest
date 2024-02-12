@@ -10,11 +10,11 @@ from setuptools.command.develop import develop
 this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
-def install(package):
+def install_package(package):
     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 def proto_compile(output_path=this_directory):
-    install("grpcio-tools==1.51.3")
+    install_package("grpcio-tools==1.51.3")
     import grpc_tools.protoc
 
     cli_args = [
