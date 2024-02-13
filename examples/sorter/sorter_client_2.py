@@ -9,10 +9,7 @@ import pickle
 np.random.seed(42)
 random.seed(42)
 
-with open('sorter/sorter_data/X_train.pkl', 'rb') as fout_X:
-    X_train = pickle.load(fout_X)
-
-with open('sorter/sorter_data/y_train.pkl', 'rb') as fout_y:   
+with open('examples/sorter/sorter_data/y_train.pkl', 'rb') as fout_y:   
     y_train = pickle.load(fout_y)
 
 if __name__ == '__main__':

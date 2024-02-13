@@ -19,10 +19,10 @@ def batch_iterator(X, y=None, batch_size=64):
         else:
             yield X[begin:end]
 
-with open('sorter/sorter_data/X_train.pkl', 'rb') as fout_X:
+with open('examples/sorter/sorter_data/X_train.pkl', 'rb') as fout_X:
     X_train = pickle.load(fout_X)
 
-with open('sorter/sorter_data/y_train.pkl', 'rb') as fout_y:   
+with open('examples/sorter/sorter_data/y_train.pkl', 'rb') as fout_y:   
     y_train = pickle.load(fout_y)
 
 

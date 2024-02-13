@@ -7,8 +7,8 @@ import numpy as np
 from ravnest.operations.utils import *
 
 from models import CNN_Net
-# from sorter.mingpt.model_without_padding_mask import GPT
-# from sorter.split_model import SortDataset
+# from examples.sorter.mingpt.model_without_padding_mask import GPT
+# from examples.sorter.dataset import SortDataset
 # from torchvision.models import resnet50
 
 random.seed(42)

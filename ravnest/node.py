@@ -691,6 +691,7 @@ class Node():
 
     def trigger_save_submodel(self):
         script = torch.jit.script(self.model)
+        os.makedirs('trained_submodels', exist_ok=True)
         script.save('trained_submodels/{}.pt'.format(self.submod_file))
         # self.send_buffer.append({'action': ActionTypes.SAVE_SUBMODEL})
         self.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
@@ -925,7 +926,7 @@ class Node():
 def create_chunks(data, size):
     chunked_data = {}
     for key, val in data.items():
-        print(key, val.shape)
+        # print(key, val.shape)
         split_axis = np.argmax(val.shape)
         chunked_data[key] = {}
         # chunked_data[key]['data'] = np.array_split(val, size, axis=split_axis)

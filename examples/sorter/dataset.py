@@ -112,8 +112,8 @@ for i in range(51200):
 X_train = np.array(X_train)
 y_train = np.array(y_train)
 
-with open('sorter/sorter_data/X_train.pkl', 'wb') as X_file:
+with open('examples/sorter/sorter_data/X_train.pkl', 'wb') as X_file:
     pickle.dump(X_train,X_file)
 
-with open('sorter/sorter_data/y_train.pkl', 'wb') as y_file:
+with open('examples/sorter/sorter_data/y_train.pkl', 'wb') as y_file:
     pickle.dump(y_train,y_file)

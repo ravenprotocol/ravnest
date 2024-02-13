@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import re
 from pathlib import Path
 import glob
 from pkg_resources import parse_requirements
@@ -18,7 +19,6 @@ def install_package(package):
 def proto_compile(output_path=this_directory):
     install_package("grpcio-tools==1.51.3")
     import grpc_tools.protoc
-    print('Output Path: ', output_path)
     cli_args = [
         "grpc_tools.protoc",
         "--proto_path=ravnest/protos",
@@ -26,8 +26,14 @@ def proto_compile(output_path=this_directory):
         "--pyi_out={}/ravnest/protos".format(output_path),
         "--grpc_python_out={}/ravnest/protos".format(output_path),
     ] + glob.glob("ravnest/protos/*.proto")
-    print('GLOB: ', glob.glob("ravnest/protos/*.proto"))
     code = grpc_tools.protoc.main(cli_args)
+    
+    for script in glob.iglob("{}/ravnest/protos/*.py".format(output_path)):
+        with open(script, "r+") as file:
+            code = file.read()
+            file.seek(0)
+            file.write(re.sub(r"\n(import .+_pb2.*)", "\nfrom . \\1", code))
+            file.truncate()
     
 
 class CustomInstallCommand(install):
