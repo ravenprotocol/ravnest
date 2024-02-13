@@ -732,31 +732,32 @@ class Node():
 
     def parallel_ring_reduce(self):#, data_dict):
         # print('\n Rank: ', rank, 'Ring ids: ', ring_ids, ' data dict: ', data_dict)
-        print('\nBegining Parameter Averaging')
-        # print('State dict before averaging: ', self.model.state_dict())
-        threads = []
-        # data_dict_keys = list(data_dict.keys())
-        for ring_id, _ in self.ring_ids.items():
-            ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
-            t = Thread(target=self.single_ring_reduce, args=(ring_data,ring_id,))
-            threads.append(t)
-            t.start()
+        if self.ring_size > 1:
+            print('\nBegining Parameter Averaging')
+            # print('State dict before averaging: ', self.model.state_dict())
+            threads = []
+            # data_dict_keys = list(data_dict.keys())
+            for ring_id, _ in self.ring_ids.items():
+                ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
+                t = Thread(target=self.single_ring_reduce, args=(ring_data,ring_id,))
+                threads.append(t)
+                t.start()
 
-        # for thread in threads:
-        #     thread.start()
+            # for thread in threads:
+            #     thread.start()
 
-        for thread in threads:
-            thread.join()
+            for thread in threads:
+                thread.join()
 
-        # print('Averaged params buffer: ', len(self.averaged_params_buffer), self.averaged_params_buffer.keys())
+            # print('Averaged params buffer: ', len(self.averaged_params_buffer), self.averaged_params_buffer.keys())
 
-        # self.model.load_state_dict(self.averaged_params_buffer, strict=False)
-        load_state_dict_conserve_versions(self.model, self.averaged_params_buffer)
+            # self.model.load_state_dict(self.averaged_params_buffer, strict=False)
+            load_state_dict_conserve_versions(self.model, self.averaged_params_buffer)
 
-        load_model_weights_into_optim(self.model, self.optimizer)
-        # print('Optimizer weights updated: ', self.optimizer.state)
-        self.average_no += 1 
-        print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
+            load_model_weights_into_optim(self.model, self.optimizer)
+            # print('Optimizer weights updated: ', self.optimizer.state)
+            self.average_no += 1 
+            print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
 
     def single_ring_reduce(self, ring_data, ring_id):
         # print('Starting ring reduce thread for: ', ring_id, ring_data)

@@ -4,17 +4,16 @@ Ravnest introduces a novel asynchronous parallel training approach that combines
 
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 
-### Install Dependencies
+### Installation
 ```bash
-pip install -r requirements.txt
+pip install git+https://github.com/ravenprotocol/ravnest.git
 ```
 
 ### Usage
 
-Compile the protobufs:
-
+Clone the Repository:
 ```bash
-python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. protos/*.proto
+git clone https://github.com/ravenprotocol/ravnest.git
 ```
 
 Generate the submodel files:
@@ -23,21 +22,19 @@ Generate the submodel files:
 python cluster_formation.py
 ```
 
-Execution of Clients (in 3 terminals):
+> **_NOTE:_**  Uncomment the correct lines in ```cluster_formation.py``` for CNN/GPT-Sorter/ResNet50 models.
+
+Execution of Clients (in 3 terminals) for CNN:
 ```bash
-python cnn_client_0.py
+python examples/cnn/cnn_client_0.py
 ```
 ```bash
-python cnn_client_1.py
+python examples/cnn/cnn_client_1.py
 ```
 ```bash
-python cnn_client_2.py
+python examples/cnn/cnn_client_2.py
 ```
 
-<!-- To run infernce on test input:
-```bash
-python sorter_inference.py
-``` -->
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 
 ### Citation

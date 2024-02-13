@@ -1,4 +1,4 @@
-# Note: Place the tiny-imagenet-200 Dataset in same directory
+# Note: Place the tiny-imagenet-200 Dataset in home directory
 import torch
 import time
 from sklearn import datasets
