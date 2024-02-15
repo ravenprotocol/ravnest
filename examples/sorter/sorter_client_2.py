@@ -12,6 +12,9 @@ random.seed(42)
 with open('examples/sorter/sorter_data/y_train.pkl', 'rb') as fout_y:   
     y_train = pickle.load(fout_y)
 
+def sorter_criterion(outputs, targets):
+    return torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+
 if __name__ == '__main__':
 
     node_name = 'node_2'
@@ -19,7 +22,7 @@ if __name__ == '__main__':
     node_metadata = load_node_json_configs(node_name=node_name)
     model = torch.jit.load(node_metadata['template_path']+'submod.pt')
     optimizer=torch.optim.Adam                
-    criterion = None    # loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+    criterion = sorter_criterion   # Custom defined Criterion
 
     node = Node(name = node_name, 
                 model = model, 

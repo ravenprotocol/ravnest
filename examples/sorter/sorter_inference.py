@@ -1,36 +1,39 @@
-# Inference Script
-
 import numpy as np
 import torch
+import os
 
-submodel_0 = torch.jit.load('trained_submodels/submod_0.pt')
-submodel_1 = torch.jit.load('trained_submodels/submod_1.pt')
-submodel_2 = torch.jit.load('trained_submodels/submod_2.pt')
+def load_submodels(dir):
+    num_submodels = len(os.listdir(dir))
+    submodels = []
+    for i in range(num_submodels):
+        submodel_path = f'trained_submodels/submod_{i}.pt'
+        submodel = torch.jit.load(submodel_path)
+        submodels.append(submodel)
+    return submodels
+
+def forward(inp, submodels):
+    for submodel in submodels:
+        submodel.eval()
+    with torch.no_grad():
+        out = inp
+        for submodel in submodels:
+            out = submodel(out) if submodels.index(submodel) == 0 else submodel(*out)
+    return out
+
+def generate(x, submodels, steps=6):
+    x = np.expand_dims(x, axis=0)
+    x = torch.tensor(x)
+    with torch.no_grad():
+        for i in range(steps):
+            out = forward(x, submodels)
+            out_tensor = out[:, -1, :]
+            out_token = torch.argmax(out_tensor, axis=-1, keepdim=True)
+            x = torch.cat((x, out_token), axis=-1)
+
+    print('Sorted Prediction: ', x[:, 6:])
+
+submodels = load_submodels('trained_submodels')
 
 test_input = np.array([2, 2, 1, 2, 0, 2])
 
-def forward(inp):
-    submodel_0.eval()
-    submodel_1.eval()
-    submodel_2.eval()
-    with torch.no_grad():
-        out_0 = submodel_0(inp)
-        out_1 = submodel_1(*out_0)
-        out_2 = submodel_2(*out_1)
-
-    return out_2
-
-def generate(x, steps=6):
-    x = np.expand_dims(x,axis=0)
-    x = torch.tensor(x)
-    with torch.no_grad():
-        for i in range(6):
-            out = forward(x)
-            out_tensor = out[:,-1,:]
-            out_token = torch.argmax(out_tensor, axis=-1, keepdim=True)
-            x = torch.concat((x, out_token), axis=-1)
-
-    print('Sorted Prediction: ', x[:,6:])
-
-
-generate(test_input, 6)
+generate(test_input, submodels, steps=6)
