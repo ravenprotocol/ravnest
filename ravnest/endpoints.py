@@ -93,22 +93,16 @@ class GrpcService(CommServer):
         size_accumulated_data_buffer = 0
         accumulated_data_buffer = b''
         for data in request:
-            # print('Received: ', request)
-            # buffer_type = data.type
             ring_id = data.ring_id
             data = data.data_chunk
             buffer = data.buffer
-            # data_type = data.type
             data_size = data.data_size
 
             if size_accumulated_data_buffer < data_size:
                 accumulated_data_buffer += buffer
                 size_accumulated_data_buffer = len(accumulated_data_buffer)
             
-            # print('Accum buffer: ', accumulated_data_buffer, data_size)
-
         data = cPickle.loads(accumulated_data_buffer)
-        # print('Data received in reduce: ', data)
         with self.reduce_lock:
             if ring_id in self.reduce_ring_buffers:
                 ring_buffer_data = self.reduce_ring_buffers[ring_id]
@@ -117,41 +111,28 @@ class GrpcService(CommServer):
             else:
                 self.reduce_ring_buffers[ring_id] = [data]
 
-        # print('Reduce ring buffer in endpoints', self.reduce_ring_buffers)
-
         return ReceivedChunk(reply=True)
     
     def gather_chunk(self, request:GatherChunk, context) -> ReceivedChunk:
         size_accumulated_data_buffer = 0
         accumulated_data_buffer = b''
         for data in request:
-            # print('Received: ', request)
-            # buffer_type = data.type
             ring_id = data.ring_id
             data = data.data_chunk
             buffer = data.buffer
-            # data_type = data.type
             data_size = data.data_size
 
             if size_accumulated_data_buffer < data_size:
                 accumulated_data_buffer += buffer
                 size_accumulated_data_buffer = len(accumulated_data_buffer)
             
-            # print('Accum buffer: ', accumulated_data_buffer, data_size)
-
         data = cPickle.loads(accumulated_data_buffer)
-        # print('Data received in gather: ', data)
         with self.gather_lock:
-            # print('In lock endpoints')
             if ring_id in self.gather_ring_buffers:
                 ring_buffer_data = self.gather_ring_buffers[ring_id]
                 ring_buffer_data.append(data)
                 self.gather_ring_buffers[ring_id] = ring_buffer_data
-                # self.gather_ring_buffers[ring_id].append(data)
             else:
                 self.gather_ring_buffers[ring_id] = [data]
-            # print('Gather buffers In lock endpoints: ', self.gather_ring_buffers)
-
-        # print('Gather ring buffers: ', self.gather_ring_buffers)
 
         return ReceivedChunk(reply=True)

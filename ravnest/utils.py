@@ -2,6 +2,7 @@ import os
 import json
 import torch
 import asyncio
+import numpy as np
 import _pickle as cPickle
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from .protos.tensor_pb2 import TensorChunk, SendTensor
@@ -113,3 +114,13 @@ def load_node_json_configs(node_name=None):
     parsed_json['ring_ids'] = {int(key): value for key, value in parsed_json['ring_ids'].items()}
     
     return parsed_json
+
+def create_chunks(data, size):
+    chunked_data = {}
+    for key, val in data.items():
+        split_axis = np.argmax(val.shape)
+        chunked_data[key] = {}
+        chunked_data[key]['data'] = list(torch.chunk(val, chunks=size, dim=split_axis))
+        chunked_data[key]['split_axis'] = split_axis
+
+    return chunked_data
