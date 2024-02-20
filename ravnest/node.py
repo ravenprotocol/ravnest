@@ -153,6 +153,7 @@ class Node():
                                           model_inputs_template=self.model_inputs_template
                                           )
 
+        self.start()
 
     def init_server(self, load_forward_buffer=None, load_backward_buffer=None, 
                     reduce_ring_buffers = None, gather_ring_buffers = None, 
@@ -287,7 +288,7 @@ class Node():
                     send_trigger_threads.append(t)
                     t.start()
 
-                    print('find_loss done. Used RAM %: ', psutil.virtual_memory().percent)
+                    # print('find_loss done. Used RAM %: ', psutil.virtual_memory().percent)
                     self.n_backwards += 1
 
                     if self.n_backwards % self.reduce_threshold == 0:

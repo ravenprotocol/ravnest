@@ -31,7 +31,6 @@ if __name__ == '__main__':
                 labels = torch.tensor(y_train), 
                 **node_metadata
                 )
-    
-    node.start()    
+ 
     while True:
         time.sleep(1)

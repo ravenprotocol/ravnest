@@ -1,21 +1,13 @@
-import torch
 import numpy as np
 import time
+import torch
+from torch.utils.data import DataLoader
 from sklearn import datasets
-from ravnest.node import Node
-from ravnest.utils import load_node_json_configs
 from sklearn.model_selection import train_test_split
-import time
+from ravnest.node import Node
+from ravnest.trainer import Trainer
+from ravnest.utils import load_node_json_configs
 
-def batch_iterator(X, y=None, batch_size=64):
-    """ Simple batch generator """
-    n_samples = X.shape[0]
-    for i in np.arange(0, n_samples, batch_size):
-        begin, end = i, min(i+batch_size, n_samples)
-        if y is not None:
-            yield X[begin:end], y[begin:end]
-        else:
-            yield X[begin:end]
 
 def to_categorical(x, n_col=None):
     if not n_col:
@@ -42,6 +34,8 @@ def get_dataset():
 
 X, X_test, y, y_test = get_dataset()
 
+train_loader = DataLoader(list(zip(X,y)), shuffle=False, batch_size=64)
+
 if __name__ == '__main__':
 
     node_name = 'node_0'
@@ -55,39 +49,20 @@ if __name__ == '__main__':
                 optimizer = optimizer,
                 **node_metadata
                 )
-    node.start()
-    batch_size = 64
-    epochs = 100
-    tensor_id = 0
+
+    trainer = Trainer(node=node,
+                      train_loader=train_loader,
+                      epochs=100,
+                      batch_size=64,
+                      inputs_dtype=torch.float32)
+    
     t1 = time.time()
-    n_forwards = 0
 
-    time.sleep(3)
+    trainer.train()
 
-    for epoch in range(epochs):
-        data_id = 0
-        for X_train, y_train in batch_iterator(X,y,batch_size=batch_size):
-            # print('\nPassing batch')
-            # output = model(torch.tensor(X_train, dtype=torch.float32))
-            node.forward_compute(data_id=data_id, tensors=torch.tensor(X_train, dtype=torch.float32))
-            n_forwards += 1
-            # print('Data id: ', data_id)
-            
-            data_id += batch_size#1
-            # break
-            # if data_id>256:
-            #     break
-        print('Epoch: ', epoch)
-        print('n_forward: ', n_forwards, '  node.n_backward: ', node.n_backwards)
-    
-    while node.n_backwards < n_forwards: #node.is_training: #
-        time.sleep(1)
-    
-    print('Training Done!: ', time.time() - t1)
+    print('Training Done!: ', time.time() - t1, ' seconds')
 
-    
-    pred = node.no_grad_forward_compute(tensors=torch.tensor(X_test, dtype=torch.float32), output_type='accuracy')
+    trainer.pred(input=X_test)
 
     while True:
         time.sleep(1)
-

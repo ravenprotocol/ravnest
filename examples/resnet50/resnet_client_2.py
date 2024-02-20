@@ -43,6 +43,6 @@ if __name__ == '__main__':
                 labels = train_loader,
                 **node_metadata
                 )
-    node.start()
+
     while True:
         time.sleep(1)

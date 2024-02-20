@@ -36,6 +36,7 @@ class Compute():
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        print('Loss: ', loss.item())
         return model_args
 
     def middle_backward_compute(self, gradient_dict):

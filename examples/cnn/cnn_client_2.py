@@ -6,15 +6,6 @@ from ravnest.node import Node
 from ravnest.utils import load_node_json_configs
 from sklearn.model_selection import train_test_split
 
-def batch_iterator(X, y=None, batch_size=64):
-    """ Simple batch generator """
-    n_samples = X.shape[0]
-    for i in np.arange(0, n_samples, batch_size):
-        begin, end = i, min(i+batch_size, n_samples)
-        if y is not None:
-            yield X[begin:end], y[begin:end]
-        else:
-            yield X[begin:end]
 
 def to_categorical(x, n_col=None):
     if not n_col:
@@ -58,7 +49,6 @@ if __name__ == '__main__':
                 test_labels=y_test,
                 **node_metadata
                 )
-    
-    node.start()    
+      
     while True:
         time.sleep(1)

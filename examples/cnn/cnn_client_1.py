@@ -16,6 +16,6 @@ if __name__ == '__main__':
                 optimizer = optimizer, 
                 **node_metadata
                 )
-    node.start()
+
     while True:
         time.sleep(1)
