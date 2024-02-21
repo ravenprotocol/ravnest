@@ -55,14 +55,7 @@ if __name__ == '__main__':
                       epochs=100,
                       batch_size=64,
                       inputs_dtype=torch.float32)
-    
-    t1 = time.time()
 
     trainer.train()
 
-    print('Training Done!: ', time.time() - t1, ' seconds')
-
     trainer.pred(input=X_test)
-
-    while True:
-        time.sleep(1)

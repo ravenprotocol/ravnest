@@ -46,9 +46,5 @@ if __name__ == '__main__':
                       epochs=1,
                       batch_size=64,
                       step_size=64)
-    
-    t1 = time.time()
 
     trainer.train()
-    
-    print('Training Done!: ', time.time() - t1)

@@ -2,7 +2,7 @@ from concurrent import futures
 import asyncio
 import grpc
 import threading
-import multiprocessing as mp
+import multiprocessing
 from threading import Thread
 import numpy as np
 import itertools
@@ -16,6 +16,8 @@ from .strings import *
 from .endpoints import GrpcService
 
 from .protos.server_pb2_grpc import add_CommServerServicer_to_server
+
+mp = multiprocessing.get_context('spawn')
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, criterion=None, 
@@ -41,6 +43,8 @@ class Node():
         self.gather_ring_buffers = self.manager.dict()
         self.reduce_iteration = self.manager.dict()
         self.gather_iteration = self.manager.dict()
+
+        self.start_server_flag = self.manager.Value(bool, False)
 
         if kwargs.get('ring_ids', None) is not None:
             self.ring_ids = kwargs.get('ring_ids', None)
@@ -169,9 +173,10 @@ class Node():
 
 
     def grpc_server_serve(self):
-        print('Listening on : ', self.local_address)
         self.server.add_insecure_port(self.local_address)
         self.server.start()
+        print('Listening on : ', self.local_address)
+        self.start_server_flag.value = True
         self.server.wait_for_termination()
 
 
@@ -182,7 +187,10 @@ class Node():
         print('Main process: ', os.getpid())
         serve_process = mp.Process(target=self.grpc_server_serve, daemon=True)
         serve_process.start()
-        time.sleep(2)
+
+        while not self.start_server_flag.value:
+            time.sleep(0.5)
+        
         buffer_thread = threading.Thread(target=self.check_load_forward_buffer, daemon=True)
         buffer_thread.start()
 
@@ -418,11 +426,13 @@ class Node():
             reduce_ring_buffers = self.reduce_ring_buffers,
             gather_ring_buffers = self.gather_ring_buffers,
             reduce_iteration = self.reduce_iteration,
-            gather_iteration = self.gather_iteration
+            gather_iteration = self.gather_iteration,
+            start_server_flag = self.start_server_flag
         )
 
     def __setstate__(self, state):
         self.local_address = state['local_address']
+        self.start_server_flag = state['start_server_flag']
         self.init_server(load_forward_buffer=state['load_forward_buffer'], 
                          load_backward_buffer=state['load_backward_buffer'], 
                          reduce_ring_buffers= state['reduce_ring_buffers'],

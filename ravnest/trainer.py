@@ -41,6 +41,8 @@ class Trainer():
         while self.node.n_backwards < self.n_forwards:
             time.sleep(1)
         
+        print('Training Done!: ', time.time() - t1, ' seconds')
+
         if self.save:
             self.node.trigger_save_submodel()
         

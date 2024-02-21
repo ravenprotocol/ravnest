@@ -40,8 +40,4 @@ if __name__ == '__main__':
                       batch_size=64
                       )
 
-    t1 = time.time()
-
     trainer.train()
-
-    print('Training Done!: ', time.time() - t1)
