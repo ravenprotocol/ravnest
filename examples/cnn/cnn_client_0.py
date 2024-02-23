@@ -47,6 +47,7 @@ if __name__ == '__main__':
     node = Node(name = node_name, 
                 model = model, 
                 optimizer = optimizer,
+                device=torch.device('cpu'),
                 **node_metadata
                 )
 

@@ -111,6 +111,7 @@ class Compute():
 
                             if data[k][arg_pos]['data'].device.type != self.device:
                                 data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)
+                                data[k][arg_pos]['data'].retain_grad()
 
                             model_args.append(data[k][arg_pos]['data'])
                             if node_type != NodeTypes.LEAF:
@@ -131,6 +132,7 @@ class Compute():
                                 
                                 if data[k][v]['data'].device.type != self.device:
                                     data[k][v]['data'] = data[k][v]['data'].to(self.device)
+                                    data[k][v]['data'].retain_grad()
 
                                 model_args.append(data[k][v]['data'])
                                 if node_type != NodeTypes.LEAF:
@@ -158,7 +160,8 @@ class Compute():
                             tensor_id = data[k][arg_pos]['tensor_id']
 
                             if data[k][arg_pos]['data'].device.type != self.device:
-                                data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)                            
+                                data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)    
+                                data[k][arg_pos]['data'].retain_grad()                        
 
                             model_args[tensor_id] = data[k][arg_pos]['data']
                             if node_type != NodeTypes.LEAF:
@@ -177,7 +180,8 @@ class Compute():
                         if 'submod' in k or 'model_inputs' in k:                                    
                             if isinstance(v, int):
                                 if data[k][v]['data'].device.type != self.device:
-                                    data[k][v]['data'] = data[k][v]['data'].to(self.device)                                      
+                                    data[k][v]['data'] = data[k][v]['data'].to(self.device) 
+                                    data[k][v]['data'].retain_grad()                            
                                 model_args[tensor_id] = data[k][v]['data']    
                             
                         data[k][v]['target'].remove(self.submod_file)

@@ -73,11 +73,11 @@ class Communication():
         if self.node_type == NodeTypes.LEAF:
             for key, value in model_args.items():
                 if value.requires_grad:
-                    grad_payload[key] = value.grad
+                    grad_payload[key] = value.grad.to(torch.device('cpu'))
         else:
             for key, value in self.input_tensors[forward_pass_id].items():
                 if value.requires_grad:
-                    grad_payload[key] = value.grad
+                    grad_payload[key] = value.grad.to(torch.device('cpu'))
         return grad_payload
 
     def create_forward_payload(self, output, tensors=None):
@@ -87,7 +87,7 @@ class Communication():
                 out = output[k]
             else:
                 out = output
-            payload[k]['data'] = out
+            payload[k]['data'] = out.to(torch.device('cpu'))
             payload[k]['tensor_id'] = self.tensor_id
             self.output_tensors[self.tensor_id] = out
             self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)

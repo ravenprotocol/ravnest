@@ -41,6 +41,7 @@ if __name__ == '__main__':
                 optimizer = optimizer,
                 criterion = criterion, 
                 labels = train_loader,
+                device=torch.device('cpu'),
                 **node_metadata
                 )
 

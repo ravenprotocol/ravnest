@@ -21,7 +21,7 @@ mp = multiprocessing.get_context('spawn')
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, criterion=None, 
-                 labels=None, test_labels=None, device = 'cpu', **kwargs):
+                 labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -280,6 +280,7 @@ class Node():
                     self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
                     if isinstance(self.labels, torch.Tensor):
+                        self.labels = self.labels.to(self.device)
                         targets = self.labels[data_id:data_id+value['input_size']]
                     else:
                         targets = next(itertools.islice(self.labels, data_id, None))[1]
@@ -364,6 +365,8 @@ class Node():
                         
 
     def forward_compute(self, data_id=None, tensors=None):
+        tensors = tensors.to(self.device)
+
         self.node_status = NodeStatus.FORWARD
 
         output = self.compute_session.root_forward_compute(tensors)
@@ -387,6 +390,7 @@ class Node():
         
 
     def no_grad_forward_compute(self, tensors=None, output_type=None):
+        tensors = tensors.to(self.device)
         self.comm_session.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
         

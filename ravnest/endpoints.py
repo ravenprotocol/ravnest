@@ -48,7 +48,6 @@ class GrpcService(CommServer):
         if buffer_type == 'forward':
 
             self.forward_lock.acquire(block=True)
-            
             self.load_forward_buffer.append(data)
             del self.forward_id_queue[0]
             self.forward_lock.release()

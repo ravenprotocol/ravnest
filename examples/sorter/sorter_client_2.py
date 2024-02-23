@@ -29,6 +29,7 @@ if __name__ == '__main__':
                 optimizer = optimizer,
                 criterion = criterion, 
                 labels = torch.tensor(y_train), 
+                device=torch.device('cpu'),
                 **node_metadata
                 )
  

@@ -47,6 +47,7 @@ if __name__ == '__main__':
                 criterion = criterion, 
                 labels = torch.tensor(y, dtype=torch.float32), 
                 test_labels=y_test,
+                device=torch.device('cpu'),
                 **node_metadata
                 )
       
