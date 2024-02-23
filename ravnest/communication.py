@@ -230,7 +230,7 @@ class Communication():
                 out = output[k]
             else:
                 out = output
-            payload[k]['data'] = out
+            payload[k]['data'] = out.to(torch.device('cpu'))
             
         if self.node_type == NodeTypes.ROOT:
             payload['model_inputs'] = self.model_inputs_template

@@ -105,7 +105,7 @@ class Node():
                 self.input_template = pickle.load(fout)
             with open('{}{}_output.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
                 self.output_template = pickle.load(fout)
-            print(self.input_template)
+            # print(self.input_template)
             self.model_inputs_template = None
             if self.backward_target_host is None and self.backward_target_port is None:
                 self.node_type = NodeTypes.ROOT
@@ -335,7 +335,7 @@ class Node():
                     self.model.eval()
                     with torch.no_grad():
                         y_pred = self.model(*model_args)
-                        y_pred = np.argmax(y_pred.detach().numpy(), axis=-1)
+                        y_pred = np.argmax(y_pred.detach().cpu().numpy(), axis=-1)
                         y_test = np.argmax(self.test_labels, axis=-1)
                         accuracy = np.sum(y_pred == y_test, axis=0)/len(y_test)
                         print('\nTest Accuracy: ', accuracy)
