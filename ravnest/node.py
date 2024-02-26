@@ -3,6 +3,7 @@ import asyncio
 import grpc
 import threading
 import multiprocessing
+import threading
 from threading import Thread
 import numpy as np
 import itertools
@@ -79,7 +80,12 @@ class Node():
                 self.param_address_mapping[param_name] = address_to_param[0]
 
         self.criterion = criterion
-        self.labels = labels
+        if labels is not None:
+            self.labels = labels
+            if isinstance(labels, torch.Tensor):
+                self.labels_iterator = labels
+            else:
+                self.labels_iterator = iter(labels)
         self.test_labels = test_labels
         self.forward_target_host = kwargs.get('forward_target_host', None)
         self.forward_target_port = kwargs.get('forward_target_port', None)
@@ -280,10 +286,15 @@ class Node():
                     self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
                     if isinstance(self.labels, torch.Tensor):
-                        self.labels = self.labels.to(self.device)
                         targets = self.labels[data_id:data_id+value['input_size']]
+                        targets = targets.to(self.device)
                     else:
-                        targets = next(itertools.islice(self.labels, data_id, None))[1]
+                        targets = next(self.labels_iterator, None)
+                        if targets is None:
+                            self.labels_iterator = iter(self.labels)
+                            targets = next(self.labels_iterator)
+
+                        targets = targets[1].to(self.device)
 
                     data = value['data']
                     model_args = self.compute_session.leaf_find_loss(data, targets=targets)

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import time
 from sklearn import datasets
+from torch.utils.data import DataLoader
 from ravnest.node import Node
 from ravnest.utils import load_node_json_configs
 from sklearn.model_selection import train_test_split
@@ -32,6 +33,8 @@ def get_dataset():
 
 X, X_test, y, y_test = get_dataset()
 
+train_loader = DataLoader(list(zip(X,torch.tensor(y, dtype=torch.float32))), shuffle=False, batch_size=64)
+
 if __name__ == '__main__':
     
     node_name = 'node_2'
@@ -45,7 +48,7 @@ if __name__ == '__main__':
                 model = model, 
                 optimizer = optimizer,
                 criterion = criterion, 
-                labels = torch.tensor(y, dtype=torch.float32), 
+                labels = train_loader, 
                 test_labels=y_test,
                 device=torch.device('cpu'),
                 **node_metadata
