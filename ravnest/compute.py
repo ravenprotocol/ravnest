@@ -22,6 +22,15 @@ class Compute():
         output = self.model(*model_args)
         return output
     
+    def middle_no_grad_forward_compute(self, data):
+        model_args = self.create_no_grad_model_args(data)
+        
+        self.model.eval()
+        with torch.no_grad():
+            output = self.model(*model_args)
+
+        return output
+
     def leaf_find_loss(self, data, targets):
         model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
         
@@ -36,7 +45,7 @@ class Compute():
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        print('Loss: ', loss.item())
+        # print('Loss: ', loss.item())
         return model_args
 
     def middle_backward_compute(self, gradient_dict):

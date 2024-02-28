@@ -80,13 +80,23 @@ class Node():
                 self.param_address_mapping[param_name] = address_to_param[0]
 
         self.criterion = criterion
+        
         if labels is not None:
             self.labels = labels
             if isinstance(labels, torch.Tensor):
                 self.labels_iterator = labels
             else:
                 self.labels_iterator = iter(labels)
-        self.test_labels = test_labels
+        
+        if test_labels is not None:
+            self.test_labels = test_labels
+            if isinstance(test_labels, torch.Tensor):
+                self.test_labels_iterator = test_labels
+            else:
+                self.test_labels_iterator = iter(test_labels)
+
+        self.net_val_accuracy = []
+
         self.forward_target_host = kwargs.get('forward_target_host', None)
         self.forward_target_port = kwargs.get('forward_target_port', None)
         self.backward_target_host = kwargs.get('backward_target_host', None)
@@ -315,15 +325,15 @@ class Node():
                         self.comm_session.parallel_ring_reduce()
 
                 elif action == ActionTypes.NO_GRAD_FORWARD:
-                    self.comm_session.parallel_ring_reduce()
+                    # self.comm_session.parallel_ring_reduce()
                     self.node_status = NodeStatus.FORWARD
                     print('No grad forward')
                     data = value['data']
-                    model_args = self.compute_session.create_no_grad_model_args(data)
-                    self.model.eval()            
-                    with torch.no_grad():
-                        output = self.model(*model_args)
-
+                    # model_args = self.compute_session.create_no_grad_model_args(data)
+                    # self.model.eval()            
+                    # with torch.no_grad():
+                    #     output = self.model(*model_args)
+                    output = self.compute_session.middle_no_grad_forward_compute(data)
                     payload = self.comm_session.create_no_grad_forward_payload(output)
 
                     final_payload = data
@@ -336,6 +346,38 @@ class Node():
                     t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
                     send_trigger_threads.append(t)
                     t.start()
+
+                elif action == ActionTypes.VAL_ACCURACY:
+                    data = value['data']
+                    model_args = self.compute_session.create_no_grad_model_args(data)
+                    
+                    self.model.eval()
+                    with torch.no_grad():
+                        y_pred = self.model(*model_args)
+                        y_pred_softmax = torch.log_softmax(y_pred, dim=1)
+                        _, y_pred_tags = torch.max(y_pred_softmax, dim=1)
+                        
+                        
+                        y_test = next(self.test_labels_iterator, None)
+                        if y_test is None:
+                            self.test_labels_iterator = iter(self.test_labels)
+                            y_test = next(self.test_labels_iterator)
+
+                        y_test = y_test[1].to(self.device)
+
+                        # _, y_test = torch.max(y_test, dim=1)
+
+
+                        correct_pred = (y_pred_tags == y_test).float()
+                        val_acc = correct_pred.sum() / len(correct_pred)
+                        val_acc = torch.round(val_acc * 100)
+
+                    # print('Validation Accuracy : ', val_acc.item())
+                    self.net_val_accuracy.append(val_acc.item())
+                    if len(self.net_val_accuracy) == len(self.test_labels_iterator):
+                        print('Validation Accuracy: ', round(sum(self.net_val_accuracy) / len(self.net_val_accuracy), 2))
+                        self.net_val_accuracy = []
+
 
                 elif action == ActionTypes.ACCURACY:
                     self.comm_session.parallel_ring_reduce()

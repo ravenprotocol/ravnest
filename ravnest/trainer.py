@@ -3,9 +3,11 @@ import numpy as np
 import time
 
 class Trainer():
-    def __init__(self, node=None, train_loader=None, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
+    def __init__(self, node=None, train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
         self.node = node
         self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.val_freq = val_freq
         self.save = save
         self.epochs = epochs
         self.batch_size = batch_size
@@ -32,9 +34,14 @@ class Trainer():
                         self.node.forward_compute(data_id=data_id, tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
                     else:
                         self.node.forward_compute(data_id=data_id, tensors=torch.tensor(X_train.numpy()))
-                self.n_forwards += 1
+                self.n_forwards += 1                
                 data_id += (self.batch_size // self.step_size)
                 
+                if self.val_loader is not None: 
+                    if self.n_forwards % self.val_freq == 0:
+                        for X_test, y_test in self.val_loader:
+                            self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
+
             print('Epoch: ', epoch)
             # print('n_forward: ', self.n_forwards, '  node.n_backward: ', self.node.n_backwards)
         

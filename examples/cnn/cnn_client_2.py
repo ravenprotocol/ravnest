@@ -34,6 +34,7 @@ def get_dataset():
 X, X_test, y, y_test = get_dataset()
 
 train_loader = DataLoader(list(zip(X,torch.tensor(y, dtype=torch.float32))), shuffle=False, batch_size=64)
+val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
 
 if __name__ == '__main__':
     
@@ -49,7 +50,7 @@ if __name__ == '__main__':
                 optimizer = optimizer,
                 criterion = criterion, 
                 labels = train_loader, 
-                test_labels=y_test,
+                test_labels=val_loader,
                 device=torch.device('cpu'),
                 **node_metadata
                 )

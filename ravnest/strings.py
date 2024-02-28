@@ -9,6 +9,7 @@ class ActionTypes(object):
     FIND_LOSS = "find_loss"
     NO_GRAD_FORWARD = "no_grad_forward"
     ACCURACY = "accuracy"
+    VAL_ACCURACY = "val_accuracy"
     PREDICTION = "prediction"
     SAVE_SUBMODEL = "save_submodel"
 

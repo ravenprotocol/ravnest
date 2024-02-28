@@ -35,6 +35,7 @@ def get_dataset():
 X, X_test, y, y_test = get_dataset()
 
 train_loader = DataLoader(list(zip(X,y)), shuffle=False, batch_size=64)
+val_loader = DataLoader(list(zip(X_test,y_test)), shuffle=False, batch_size=64)
 
 if __name__ == '__main__':
 
@@ -53,6 +54,8 @@ if __name__ == '__main__':
 
     trainer = Trainer(node=node,
                       train_loader=train_loader,
+                      val_loader=val_loader,
+                      val_freq=64,
                       epochs=100,
                       batch_size=64,
                       inputs_dtype=torch.float32)
