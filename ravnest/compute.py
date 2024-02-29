@@ -45,7 +45,10 @@ class Compute():
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        # print('Loss: ', loss.item())
+        print('Loss: ', round(loss.item(), 4))
+        f = open("losses.txt", "a")
+        f.write(str(round(loss.item(), 4)) + '\n')
+        f.close() 
         return model_args
 
     def middle_backward_compute(self, gradient_dict):

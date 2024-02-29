@@ -37,10 +37,10 @@ class Trainer():
                 self.n_forwards += 1                
                 data_id += (self.batch_size // self.step_size)
                 
-                if self.val_loader is not None: 
-                    if self.n_forwards % self.val_freq == 0:
-                        for X_test, y_test in self.val_loader:
-                            self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
+            if self.val_loader is not None: 
+                if self.n_forwards % self.val_freq == 0:
+                    for X_test, y_test in self.val_loader:
+                        self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
 
             print('Epoch: ', epoch)
             # print('n_forward: ', self.n_forwards, '  node.n_backward: ', self.node.n_backwards)

@@ -27,7 +27,7 @@ delete_all_folders(path)
 model = CNN_Net()
 
 ## For ResNET 50 Model
-# model = resnet50()
+# model = resnet50(num_classes=200)
 
 ## For Sorter Model
 # train_dataset = SortDataset('train')

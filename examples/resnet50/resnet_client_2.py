@@ -3,28 +3,42 @@ import torch
 import time
 from ravnest.node import Node
 from ravnest.utils import load_node_json_configs
-from torchvision import transforms, datasets
-from torch.utils.data import Subset, DataLoader
+from torchvision import transforms
+from torch.utils.data import DataLoader
+from TinyImageNet import TinyImageNet
+import numpy as np
+import random
+
+torch.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
 
 def get_dataset(root=None):
 
-    transform = transforms.Compose([
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    training_transform = transforms.Compose([
+        transforms.Lambda(lambda x: x.convert("RGB")),
         # transforms.RandomResizedCrop(224),
-        # transforms.RandomResizedCrop(64),
-        # transforms.RandomHorizontalFlip(),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
+        normalize])
 
-    train_dataset = datasets.ImageFolder(root=root + '/train', transform=transform)
-    train_subset_indices = range(1000)
-    train_subset_dataset = Subset(train_dataset, train_subset_indices)
-    train_loader = DataLoader(train_subset_dataset, batch_size=64, shuffle=False, num_workers=0)
+    valid_transform = transforms.Compose([
+        transforms.Lambda(lambda x: x.convert("RGB")),
+        # transforms.Resize(256),
+        # transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize])
 
-    val_dataset = datasets.ImageFolder(root=root + '/val', transform=transform)
-    val_subset_indices = range(1000, 1100)
-    val_subset_dataset = Subset(val_dataset, val_subset_indices)
-    val_loader = DataLoader(val_subset_dataset, batch_size=64, shuffle=False, num_workers=0)
+    in_memory = False
+
+    training_set = TinyImageNet(root, 'train', transform=training_transform, in_memory=in_memory)
+    train_loader = DataLoader(training_set, batch_size=100, shuffle=True, num_workers=0)
+
+    val_set = TinyImageNet(root, 'val', transform=valid_transform, in_memory=in_memory)
+    val_loader = DataLoader(val_set, batch_size=100, shuffle=False, num_workers=0)
 
     return train_loader, val_loader
 
@@ -36,16 +50,18 @@ if __name__ == '__main__':
 
     node_metadata = load_node_json_configs(node_name=node_name)
     model = torch.jit.load(node_metadata['template_path']+'submod.pt')
-    optimizer=torch.optim.Adam
+    optimizer = torch.optim.SGD
+    optimizer_params = {'lr':0.01, 'momentum':0.9, 'weight_decay':0.0005}
     criterion = torch.nn.functional.cross_entropy
 
     node = Node(name = node_name, 
                 model = model, 
                 optimizer = optimizer,
+                optimizer_params = optimizer_params,
                 criterion = criterion, 
                 labels = train_loader,
                 test_labels = val_loader,
-                device=torch.device('cpu'),
+                device=torch.device('cuda'),
                 **node_metadata
                 )
 

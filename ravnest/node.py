@@ -21,7 +21,7 @@ from .protos.server_pb2_grpc import add_CommServerServicer_to_server
 mp = multiprocessing.get_context('spawn')
 
 class Node():
-    def __init__(self, name=None, model=None, optimizer=None, criterion=None, 
+    def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, criterion=None, 
                  labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
@@ -127,13 +127,13 @@ class Node():
                 self.node_type = NodeTypes.ROOT
                 with open('{}model_inputs.pkl'.format(kwargs.get('template_path', None)), 'rb') as fout:
                     self.model_inputs_template = pickle.load(fout)
-                self.optimizer = optimizer(current_model_params_clone(self.model))
+                self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
             elif self.forward_target_host is None and self.forward_target_port is None:
                 self.node_type = NodeTypes.LEAF
-                self.optimizer = optimizer(self.model.parameters())
+                self.optimizer = optimizer(self.model.parameters(), **optimizer_params)
             else:
                 self.node_type = NodeTypes.MID
-                self.optimizer = optimizer(current_model_params_clone(self.model))
+                self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
 
         self.compute_session = Compute(model=self.model,
                                        optimizer=self.optimizer,
@@ -354,28 +354,25 @@ class Node():
                     self.model.eval()
                     with torch.no_grad():
                         y_pred = self.model(*model_args)
-                        y_pred_softmax = torch.log_softmax(y_pred, dim=1)
-                        _, y_pred_tags = torch.max(y_pred_softmax, dim=1)
-                        
-                        
+                        _, y_pred_tags = torch.max(y_pred, dim=1)
+                                                
                         y_test = next(self.test_labels_iterator, None)
                         if y_test is None:
                             self.test_labels_iterator = iter(self.test_labels)
                             y_test = next(self.test_labels_iterator)
 
                         y_test = y_test[1].to(self.device)
-
-                        # _, y_test = torch.max(y_test, dim=1)
-
-
                         correct_pred = (y_pred_tags == y_test).float()
-                        val_acc = correct_pred.sum() / len(correct_pred)
+                        val_acc = correct_pred.sum() / len(y_test)
                         val_acc = torch.round(val_acc * 100)
 
-                    # print('Validation Accuracy : ', val_acc.item())
                     self.net_val_accuracy.append(val_acc.item())
                     if len(self.net_val_accuracy) == len(self.test_labels_iterator):
-                        print('Validation Accuracy: ', round(sum(self.net_val_accuracy) / len(self.net_val_accuracy), 2))
+                        validation_accuracy = round(sum(self.net_val_accuracy) / len(self.net_val_accuracy), 2)
+                        print('Validation Accuracy: ', validation_accuracy)
+                        f = open("val_accuracies.txt", "a")
+                        f.write(str(validation_accuracy) + '\n')
+                        f.close() 
                         self.net_val_accuracy = []
 
 
