@@ -7,9 +7,14 @@ import numpy as np
 from ravnest.operations.utils import *
 
 from models import CNN_Net
+
+# from models import inception_v3
+
 # from examples.sorter.mingpt.model_without_padding_mask import GPT
 # from examples.sorter.dataset import SortDataset
+
 # from torchvision.models import resnet50
+
 
 random.seed(42)
 np.random.seed(42)
@@ -28,6 +33,9 @@ model = CNN_Net()
 
 ## For ResNET 50 Model
 # model = resnet50(num_classes=200)
+
+# # For Inception V3 Model
+# model = inception_v3()
 
 ## For Sorter Model
 # train_dataset = SortDataset('train')
