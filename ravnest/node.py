@@ -6,7 +6,6 @@ import multiprocessing
 import threading
 from threading import Thread
 import numpy as np
-import itertools
 import psutil
 import pickle
 import time
@@ -268,8 +267,34 @@ class Node():
                     action = ActionTypes.FIND_LOSS
                 if action == ActionTypes.NO_GRAD_FORWARD and self.node_type == NodeTypes.LEAF:
                     action = ActionTypes.ACCURACY
+
+                if action == ActionTypes.ROOT_FORWARD:
+                    data_id = value['data_id']
+                    tensors = value['data']
+                    tensors = tensors.to(self.device)
+
+                    self.node_status = NodeStatus.FORWARD
+
+                    output = self.compute_session.root_forward_compute(tensors)
+
+                    payload = self.comm_session.create_forward_payload(output, tensors=tensors)
+
+                    final_payload = {}
+                    final_payload[self.submod_file] = payload
+
+                    sent_data = {'data_id':data_id,
+                                'forward_pass_id':self.forward_pass_id,
+                                'data': final_payload,
+                                'input_size': tensors.shape[0],
+                                'action': ActionTypes.FORWARD}
+                    
+                    self.forward_pass_id += 1
+                    self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+                    print('Forward compute done for: ', self.tensor_id)
+                    self.root_compute = True
+                    self.node_status = NodeStatus.IDLE
                 
-                if action == ActionTypes.FORWARD:
+                elif action == ActionTypes.FORWARD:
                     self.node_status = NodeStatus.FORWARD
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
@@ -362,6 +387,12 @@ class Node():
                             y_test = next(self.test_labels_iterator)
 
                         y_test = y_test[1].to(self.device)
+
+                        #for cnn
+                        # print(y_pred.shape, y_test.shape)
+                        # y_pred_tags = np.argmax(y_pred_tags, axis=-1)
+                        # y_test = np.argmax(y_test, axis=-1)
+
                         correct_pred = (y_pred_tags == y_test).float()
                         val_acc = correct_pred.sum() / len(y_test)
                         val_acc = torch.round(val_acc * 100)
@@ -415,27 +446,37 @@ class Node():
                         
 
     def forward_compute(self, data_id=None, tensors=None):
-        tensors = tensors.to(self.device)
+        data = {'data':tensors, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
 
-        self.node_status = NodeStatus.FORWARD
+        self.forward_lock.acquire(block=True)
+        self.load_forward_buffer.append(data)
+        self.forward_lock.release()
 
-        output = self.compute_session.root_forward_compute(tensors)
+        self.root_compute = False
 
-        payload = self.comm_session.create_forward_payload(output, tensors=tensors)
+        while not self.root_compute:
+            time.sleep(0)
+        # tensors = tensors.to(self.device)
 
-        final_payload = {}
-        final_payload[self.submod_file] = payload
+        # self.node_status = NodeStatus.FORWARD
 
-        sent_data = {'data_id':data_id,
-                    'forward_pass_id':self.forward_pass_id,
-                    'data': final_payload,
-                    'input_size': tensors.shape[0],
-                    'action': ActionTypes.FORWARD}
+        # output = self.compute_session.root_forward_compute(tensors)
+
+        # payload = self.comm_session.create_forward_payload(output, tensors=tensors)
+
+        # final_payload = {}
+        # final_payload[self.submod_file] = payload
+
+        # sent_data = {'data_id':data_id,
+        #             'forward_pass_id':self.forward_pass_id,
+        #             'data': final_payload,
+        #             'input_size': tensors.shape[0],
+        #             'action': ActionTypes.FORWARD}
         
-        self.forward_pass_id += 1
-        self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
-        print('Forward compute done for: ', self.tensor_id)
-        self.node_status = NodeStatus.IDLE
+        # self.forward_pass_id += 1
+        # self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        # print('Forward compute done for: ', self.tensor_id)
+        # self.node_status = NodeStatus.IDLE
 
         
 

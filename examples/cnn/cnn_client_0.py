@@ -62,4 +62,5 @@ if __name__ == '__main__':
 
     trainer.train()
 
-    trainer.pred(input=X_test)
+    # trainer.pred(input=X_test)
+    trainer.evaluate()

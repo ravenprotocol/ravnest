@@ -59,3 +59,7 @@ class Trainer():
         else:
             pred = self.node.no_grad_forward_compute(tensors=torch.tensor(input.numpy(), dtype=torch.float32), output_type='accuracy')
         return pred
+    
+    def evaluate(self):
+        for X_test, y_test in self.val_loader:
+            self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
