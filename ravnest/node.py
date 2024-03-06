@@ -6,11 +6,13 @@ import multiprocessing
 import threading
 from threading import Thread
 import numpy as np
+import shutil
 import psutil
 import pickle
 import time
 from .communication import Communication
 from .compute import Compute
+from .globals import g
 from .utils import *
 from .strings import *
 from .endpoints import GrpcService
@@ -21,7 +23,12 @@ mp = multiprocessing.get_context('spawn')
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, criterion=None, 
-                 labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
+                 labels=None, test_labels=None, device = torch.device('cpu'), gpu_usage_limit=0.75, **kwargs):
+        
+        g.name = name
+
+        self.usable_gpu_memory = gpu_usage_limit * torch.cuda.get_device_properties(0).total_memory
+        
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -31,6 +38,8 @@ class Node():
         self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
         self.name = name
 
+        self.reset()
+        
         self.model = model
         self.device = device
 
@@ -134,9 +143,11 @@ class Node():
                 self.node_type = NodeTypes.MID
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
 
-        self.compute_session = Compute(model=self.model,
+        self.compute_session = Compute(name=self.name,
+                                       model=self.model,
                                        optimizer=self.optimizer,
                                        device=self.device,
+                                       usable_gpu_memory=self.usable_gpu_memory,
                                        input_tensors=self.input_tensors,
                                        output_tensors=self.output_tensors,
                                        submod_file=self.submod_file,
@@ -275,7 +286,11 @@ class Node():
 
                     self.node_status = NodeStatus.FORWARD
 
+                    print('Before Root Forward: ')
+                    check_gpu_usage()
                     output = self.compute_session.root_forward_compute(tensors)
+                    print('After Root Forward: ')
+                    check_gpu_usage()
 
                     payload = self.comm_session.create_forward_payload(output, tensors=tensors)
 
@@ -299,7 +314,11 @@ class Node():
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
                     
+                    print('Before Forward: ')
+                    check_gpu_usage()
                     output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
+                    print('After Forward: ')
+                    check_gpu_usage()
 
                     payload = self.comm_session.create_forward_payload(output)
 
@@ -389,9 +408,7 @@ class Node():
                         y_test = y_test[1].to(self.device)
 
                         #for cnn
-                        # print(y_pred.shape, y_test.shape)
-                        # y_pred_tags = np.argmax(y_pred_tags, axis=-1)
-                        # y_test = np.argmax(y_test, axis=-1)
+                        # y_test = torch.argmax(y_test, dim=1)
 
                         correct_pred = (y_pred_tags == y_test).float()
                         val_acc = correct_pred.sum() / len(y_test)
@@ -508,6 +525,15 @@ class Node():
         self.comm_session.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('SAVE done')
 
+    def reset(self):
+        if os.path.exists('{}_aux'.format(self.name)):
+            shutil.rmtree('{}_aux'.format(self.name))
+        os.makedirs('{}_aux'.format(self.name), exist_ok=True)
+        if os.path.exists('losses.txt'):
+            os.remove('losses.txt')
+        if os.path.exists('val_accuracies.txt'):
+            os.remove('val_accuracies.txt')
+        
 
     def __getstate__(self):
         return dict(

@@ -1,25 +1,34 @@
+from .globals import g
 from .strings import *
 from .utils import *
 import torch
+import pickle
 
 class Compute():
-    def __init__(self, model=None, optimizer=None, device=None, input_tensors=None, output_tensors=None, submod_file=None, criterion=None, input_template=None):
+    def __init__(self, name=None, model=None, optimizer=None, device=None, usable_gpu_memory=0.75, input_tensors=None, output_tensors=None, submod_file=None, criterion=None, input_template=None):
+        self.name = name
         self.model = model
         self.optimizer = optimizer
         self.device = device
+        self.usable_gpu_memory = usable_gpu_memory
         self.input_tensors = input_tensors
         self.submod_file = submod_file
         self.criterion = criterion
         self.output_tensors = output_tensors
         self.input_template = input_template
+        g.tid = 0 
     
     def middle_forward_compute(self, data, forward_pass_id):
         model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.MID)
         
         if not self.model.training:
             self.model.train()
-
-        output = self.model(*model_args)
+                
+        if get_used_gpu_memory() >= self.usable_gpu_memory:
+            with torch.autograd.graph.saved_tensors_hooks(pack_hook, unpack_hook):
+                output = self.model(*model_args)
+        else:
+            output = self.model(*model_args)
         return output
     
     def middle_no_grad_forward_compute(self, data):
@@ -41,10 +50,15 @@ class Compute():
         
         loss = self.criterion(outputs, targets)
         
+        print('Before backward GPU: ')
+        check_gpu_usage()
         self.model.zero_grad()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        print('After backward GPU: ')
+        check_gpu_usage()
+
         print('Loss: ', round(loss.item(), 4))
         f = open("losses.txt", "a")
         f.write(str(round(loss.item(), 4)) + '\n')
@@ -94,8 +108,13 @@ class Compute():
     def root_forward_compute(self, tensors=None):
         if not self.model.training:
             self.model.train()
+        
+        if get_used_gpu_memory() >= self.usable_gpu_memory:
+            with torch.autograd.graph.saved_tensors_hooks(pack_hook, unpack_hook):
+                output = self.model(tensors)
+        else:
+            output = self.model(tensors)
 
-        output = self.model(tensors)
         return output
 
     def root_no_grad_forward_compute(self, tensors=None):
@@ -246,3 +265,12 @@ class Compute():
                         del data[k]
             
         return model_args
+
+def pack_hook(tensor):
+    temp_file = SelfDeletingTempFile(g.tid, name=g.name)
+    torch.save(tensor, temp_file.name, pickle_module=pickle, pickle_protocol=pickle.HIGHEST_PROTOCOL)
+    g.tid += 1
+    return temp_file
+
+def unpack_hook(data):
+    return torch.load(data.name)

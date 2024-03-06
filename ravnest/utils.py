@@ -3,6 +3,7 @@ import json
 import torch
 import asyncio
 import numpy as np
+import nvidia_smi
 import _pickle as cPickle
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from .protos.tensor_pb2 import TensorChunk, SendTensor
@@ -124,3 +125,32 @@ def create_chunks(data, size):
         chunked_data[key]['split_axis'] = split_axis
 
     return chunked_data
+
+class SelfDeletingTempFile():
+    def __init__(self, tid, name=None):
+        self.name = '{}_aux/{}.pt'.format(name, tid)
+
+    def __del__(self):
+        os.remove(self.name)
+
+def get_used_gpu_memory():
+    nvidia_smi.nvmlInit()
+    deviceCount = nvidia_smi.nvmlDeviceGetCount()
+    used_memory = []
+    for i in range(deviceCount):
+        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        used_memory.append(info.used)
+    nvidia_smi.nvmlShutdown()
+    return used_memory[0]
+
+def check_gpu_usage():
+    nvidia_smi.nvmlInit()
+
+    deviceCount = nvidia_smi.nvmlDeviceGetCount()
+    for i in range(deviceCount):
+        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, round(info.total * 1e-9, 2), round(info.free * 1e-9, 2), round(info.used * 1e-9, 2)))
+            
+    nvidia_smi.nvmlShutdown()

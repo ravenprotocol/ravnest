@@ -62,6 +62,7 @@ if __name__ == '__main__':
                 labels = train_loader,
                 test_labels = val_loader,
                 device=torch.device('cuda'),
+                gpu_usage_limit = 0.25,
                 **node_metadata
                 )
 

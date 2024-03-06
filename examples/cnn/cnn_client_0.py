@@ -48,7 +48,8 @@ if __name__ == '__main__':
     node = Node(name = node_name, 
                 model = model, 
                 optimizer = optimizer,
-                device=torch.device('cpu'),
+                device=torch.device('cuda'),
+                gpu_usage_limit = 0.75,
                 **node_metadata
                 )
 
