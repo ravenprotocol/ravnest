@@ -234,7 +234,7 @@ class Node():
                     self.node_status = NodeStatus.BACKWARD
                     gradient_dict = value['data']
                     forward_pass_id = value['forward_pass_id']
-                    pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict)
+                    pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id)
                     
                     if self.node_type != NodeTypes.ROOT:
                         gradients = self.comm_session.create_backward_payload(forward_pass_id=forward_pass_id)
@@ -288,7 +288,7 @@ class Node():
 
                     print('Before Root Forward: ')
                     check_gpu_usage()
-                    output = self.compute_session.root_forward_compute(tensors)
+                    output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id)
                     print('After Root Forward: ')
                     check_gpu_usage()
 
