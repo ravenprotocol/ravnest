@@ -2,10 +2,13 @@ from .strings import *
 from .utils import *
 import torch
 import pickle
-import multiprocessing
+# import multiprocessing
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait
 
-mp = multiprocessing.get_context('spawn')
+mp = torch.multiprocessing.get_context('spawn')
 
 class Compute():
     def __init__(self, name=None, model=None, optimizer=None, device=None, usable_gpu_memory=0.75, input_tensors=None, output_tensors=None, submod_file=None, criterion=None, input_template=None):
@@ -20,16 +23,21 @@ class Compute():
         self.output_tensors = output_tensors
         self.input_template = input_template
         self.fpid_to_intermediates = {}
-        self.manager = mp.Manager()
-        self.preload_intermediates_buffer = self.manager.dict()
+        # self.manager = mp.Manager()
+        self.preload_intermediates_buffer = {} #self.manager.dict()
         self.forward_pass_id = 0
         self.fpid_to_process_backward = 0
         self.tid = 0
         self.preload_lock = mp.Lock()
-        self.current_preload_proc = None
+        # self.current_preload_proc = None
+        # self.current_preload_thread = None
+        self.current_preload_threads = []
+        self.packing_threadpool = ThreadPoolExecutor(3)
+        self.packing_futures = {}
     
     def middle_forward_compute(self, data, forward_pass_id):
         self.forward_pass_id = forward_pass_id
+        print('Middle Forward fpid: ',self.forward_pass_id)
         model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.MID)
         
         if not self.model.training:
@@ -78,13 +86,37 @@ class Compute():
 
     def middle_backward_compute(self, gradient_dict, forward_pass_id):
         self.fpid_to_process_backward = forward_pass_id
+        print('\nMiddle Backward Compute Started', self.fpid_to_process_backward)
 
-        if self.current_preload_proc is not None and self.current_preload_proc.is_alive():
-            self.current_preload_proc.join()
+        # if self.current_preload_thread is not None and self.current_preload_thread.is_alive():
+        #     self.current_preload_thread.join()
+        # print('Len of current preload threads', len(self.current_preload_threads))
+        if len(self.current_preload_threads) > 0:
+            for current_preload_thread in self.current_preload_threads:
+                if current_preload_thread.is_alive():
+                    current_preload_thread.join()
+                    print('Joined')
+            self.current_preload_threads = []
         
+        print('Packin future keys: ', self.packing_futures.keys())
+        if len(self.packing_futures)>0:
+            if self.packing_futures.get(forward_pass_id, None) is not None:
+                wait(self.packing_futures[forward_pass_id])
+                print('Finished waiting for: ', forward_pass_id)
+                del self.packing_futures[forward_pass_id]
+            
+            if self.packing_futures.get(forward_pass_id+1, None) is not None:
+                wait(self.packing_futures[forward_pass_id+1])
+                print('Finished waiting for: ', forward_pass_id+1)
+                del self.packing_futures[forward_pass_id+1]
+
+
+        # print('self.fpid_to_intermediates.keys(): ', self.fpid_to_intermediates.keys(), forward_pass_id + 1)
         if self.fpid_to_intermediates.get(forward_pass_id+1, None) is not None:
-            self.current_preload_proc = mp.Process(target=self.trigger_parallel_preload_jobs, args=(forward_pass_id+1, self.fpid_to_intermediates[forward_pass_id+1],))
-            self.current_preload_proc.start()
+            print('Triggering preload thread for: ', forward_pass_id + 1)
+            # self.current_preload_proc = mp.Process(target=self.trigger_parallel_preload_jobs, args=(forward_pass_id+1, self.fpid_to_intermediates[forward_pass_id+1],), daemon=True)
+            self.current_preload_thread = threading.Thread(target=self.trigger_parallel_preload_jobs, args=(forward_pass_id+1, self.fpid_to_intermediates[forward_pass_id+1],), daemon=True)
+            self.current_preload_thread.start()
 
         self.model.zero_grad()
         self.optimizer.zero_grad()
@@ -119,6 +151,10 @@ class Compute():
             else:
                 pass_grad_keys.append(key)
 
+        if self.preload_intermediates_buffer.get(self.fpid_to_process_backward, None) is not None:
+            print('Deleting: ', self.fpid_to_process_backward)
+            del self.preload_intermediates_buffer[self.fpid_to_process_backward]
+             
         load_grads_into_optimizer(self.model, self.optimizer)
         self.optimizer.step()
         load_optim_weights_into_model(self.model, self.optimizer)
@@ -288,50 +324,62 @@ class Compute():
         return model_args
 
     def pack_hook(self, tensor):
-        temp_file_name = '{}_aux/{}.pt'.format(self.tid, self.name)
+        temp_file_name = '{}_aux/{}.pt'.format(self.name, self.tid)
         temp_file = SelfDeletingTempFile(name=temp_file_name)
-        torch.save(tensor, temp_file.name, pickle_module=pickle, pickle_protocol=pickle.HIGHEST_PROTOCOL)
+        packing_future = self.packing_threadpool.submit(torch.save, tensor.cpu(), temp_file_name)#, pickle_module=pickle, pickle_protocol=pickle.HIGHEST_PROTOCOL)
+        
+        if self.packing_futures.get(self.forward_pass_id,None) is not None:
+            self.packing_futures[self.forward_pass_id].append(packing_future)
+        else:
+            self.packing_futures[self.forward_pass_id] = [packing_future]
+
+        # torch.save(tensor, temp_file.name, pickle_module=pickle, pickle_protocol=pickle.HIGHEST_PROTOCOL)
         self.tid += 1
+        # print('Packing: ', self.forward_pass_id, temp_file.name)
         if self.fpid_to_intermediates.get(self.forward_pass_id, None) is not None:
             self.fpid_to_intermediates[self.forward_pass_id].append(temp_file.name)
         else:
             self.fpid_to_intermediates[self.forward_pass_id] = [temp_file.name]
-        
         return temp_file
 
     def unpack_hook(self, file):
-        self.preload_lock.acquire()
+        # print('Unpacking: ', self.fpid_to_process_backward, file.name)
         if self.preload_intermediates_buffer.get(self.fpid_to_process_backward, None) is not None:
             tensor = self.preload_intermediates_buffer[self.fpid_to_process_backward][file.name]
-            temp = self.preload_intermediates_buffer[self.fpid_to_process_backward]
-            del temp[file.name]
-            self.preload_intermediates_buffer[self.fpid_to_process_backward] = temp
-            self.preload_lock.release()
             return tensor
-        self.preload_lock.release()
-        return torch.load(file.name)
+        return torch.load(file.name, map_location = self.device)
 
     def trigger_parallel_preload_jobs(self, next_fpid, intermediate_tensors):
+        print('Process started next_fpid: ', next_fpid)
         k, m = divmod(len(intermediate_tensors), 3)
         chunked_list = (intermediate_tensors[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(3))
-        preload_threads = []
+        # preload_threads = []
         for chunk in chunked_list:
             t = threading.Thread(target=self.populate_preload_buffer, args=(next_fpid, chunk))
-            preload_threads.append(t)
+            # preload_threads.append(t)
+            self.current_preload_threads.append(t)
             t.start()
         
-        for thread in preload_threads:
-            thread.join()
+        # for thread in preload_threads:
+        #     thread.join()
+        # self.populate_preload_buffer(next_fpid, intermediate_tensors)
+        print('Process ended')
+        
 
     
     def populate_preload_buffer(self, next_fpid, intermediate_tensors):
         fpid_preload_buffer = {}
         for file_name in intermediate_tensors:
-            fpid_preload_buffer[file_name] = torch.load(file_name)
+            # print('file_name in ppb: ', file_name, next_fpid)
+            fpid_preload_buffer[file_name] = torch.load(file_name, map_location = self.device)
 
-        self.preload_lock.acquire()
-        self.preload_intermediates_buffer[next_fpid] = fpid_preload_buffer
-        self.preload_lock.release()
+        # self.preload_lock.acquire()
+        if self.preload_intermediates_buffer.get(next_fpid, None) is not None:
+            self.preload_intermediates_buffer[next_fpid].update(fpid_preload_buffer)
+        else:
+            self.preload_intermediates_buffer[next_fpid] = fpid_preload_buffer
+        # print('populate_preload_buffer done for: ', next_fpid)#, self.preload_intermediates_buffer[5].keys())
+        # self.preload_lock.release()
 
     
     def __getstate__(self):

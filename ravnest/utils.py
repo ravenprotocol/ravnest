@@ -127,8 +127,8 @@ def create_chunks(data, size):
     return chunked_data
 
 class SelfDeletingTempFile():
-    def __init__(self, tid, name=None):
-        self.name = '{}_aux/{}.pt'.format(name, tid)
+    def __init__(self, name=None):
+        self.name = name
 
     def __del__(self):
         os.remove(self.name)
