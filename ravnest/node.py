@@ -12,7 +12,6 @@ import pickle
 import time
 from .communication import Communication
 from .compute import Compute
-from .globals import g
 from .utils import *
 from .strings import *
 from .endpoints import GrpcService
@@ -24,10 +23,8 @@ mp = multiprocessing.get_context('spawn')
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, criterion=None, 
                  labels=None, test_labels=None, device = torch.device('cpu'), gpu_usage_limit=0.75, **kwargs):
-        
-        g.name = name
 
-        self.usable_gpu_memory = gpu_usage_limit * torch.cuda.get_device_properties(0).total_memory
+        self.usable_gpu_memory = 1 #gpu_usage_limit * torch.cuda.get_device_properties(0).total_memory
         
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
@@ -143,13 +140,18 @@ class Node():
                 self.node_type = NodeTypes.MID
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
 
+        self.fpid_to_tensor_ids = {}
+
         self.compute_session = Compute(name=self.name,
                                        model=self.model,
                                        optimizer=self.optimizer,
                                        device=self.device,
+                                       node_type = self.node_type,
+                                       output_template = self.output_template,
                                        usable_gpu_memory=self.usable_gpu_memory,
                                        input_tensors=self.input_tensors,
                                        output_tensors=self.output_tensors,
+                                       fpid_to_tensor_ids = self.fpid_to_tensor_ids,
                                        submod_file=self.submod_file,
                                        criterion=self.criterion,
                                        input_template=self.input_template
@@ -171,6 +173,7 @@ class Node():
                                           backward_target_port=self.backward_target_port, 
                                           output_tensors=self.output_tensors, 
                                           input_tensors=self.input_tensors,
+                                          fpid_to_tensor_ids = self.fpid_to_tensor_ids,
                                           reduce_ring_buffers=self.reduce_ring_buffers, 
                                           gather_ring_buffers=self.gather_ring_buffers,
                                           reduce_iteration=self.reduce_iteration, 
@@ -286,13 +289,13 @@ class Node():
 
                     self.node_status = NodeStatus.FORWARD
 
-                    print('Before Root Forward: ')
-                    check_gpu_usage()
+                    # print('Before Root Forward: ')
+                    # check_gpu_usage()
                     output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id)
-                    print('After Root Forward: ')
-                    check_gpu_usage()
+                    # print('After Root Forward: ')
+                    # check_gpu_usage()
 
-                    payload = self.comm_session.create_forward_payload(output, tensors=tensors)
+                    payload = self.comm_session.create_forward_payload(output, tensors=tensors, forward_pass_id = self.forward_pass_id)
 
                     final_payload = {}
                     final_payload[self.submod_file] = payload
@@ -303,9 +306,10 @@ class Node():
                                 'input_size': tensors.shape[0],
                                 'action': ActionTypes.FORWARD}
                     
+                    print('Forward compute done for: ', self.forward_pass_id)
                     self.forward_pass_id += 1
                     self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
-                    print('Forward compute done for: ', self.tensor_id)
+                    # print('Forward compute done for: ', self.tensor_id)
                     self.root_compute = True
                     self.node_status = NodeStatus.IDLE
                 
@@ -314,13 +318,13 @@ class Node():
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
                     
-                    print('Before Forward: ')
-                    check_gpu_usage()
+                    # print('Before Forward: ')
+                    # check_gpu_usage()
                     output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
-                    print('After Forward: ')
-                    check_gpu_usage()
+                    # print('After Forward: ')
+                    # check_gpu_usage()
 
-                    payload = self.comm_session.create_forward_payload(output)
+                    payload = self.comm_session.create_forward_payload(output, forward_pass_id = forward_pass_id)
 
                     final_payload = data
                     final_payload[self.submod_file] = payload
@@ -408,7 +412,7 @@ class Node():
                         y_test = y_test[1].to(self.device)
 
                         #for cnn
-                        # y_test = torch.argmax(y_test, dim=1)
+                        y_test = torch.argmax(y_test, dim=1)
 
                         correct_pred = (y_pred_tags == y_test).float()
                         val_acc = correct_pred.sum() / len(y_test)

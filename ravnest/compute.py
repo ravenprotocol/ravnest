@@ -11,43 +11,68 @@ from concurrent.futures import wait
 mp = torch.multiprocessing.get_context('spawn')
 
 class Compute():
-    def __init__(self, name=None, model=None, optimizer=None, device=None, usable_gpu_memory=0.75, input_tensors=None, output_tensors=None, submod_file=None, criterion=None, input_template=None):
+    def __init__(self, name=None, model=None, 
+                 optimizer=None, device=None, 
+                 node_type = None,
+                 output_template = None,
+                 usable_gpu_memory=0.75, 
+                 input_tensors=None, output_tensors=None, 
+                 fpid_to_tensor_ids=None, submod_file=None, 
+                 criterion=None, input_template=None):
+    
         self.name = name
         self.model = model
         self.optimizer = optimizer
         self.device = device
+        self.node_type = node_type
         self.usable_gpu_memory = usable_gpu_memory
         self.input_tensors = input_tensors
         self.submod_file = submod_file
         self.criterion = criterion
         self.output_tensors = output_tensors
         self.input_template = input_template
-        self.fpid_to_intermediates = {}
-        # self.manager = mp.Manager()
-        self.preload_intermediates_buffer = {} #self.manager.dict()
-        self.forward_pass_id = 0
-        self.fpid_to_process_backward = 0
-        self.tid = 0
-        self.preload_lock = mp.Lock()
-        # self.current_preload_proc = None
-        # self.current_preload_thread = None
-        self.current_preload_threads = []
-        self.packing_threadpool = ThreadPoolExecutor(3)
-        self.packing_futures = {}
+        self.output_template = output_template
+        self.active_version = None
+
+        self.recompute_thread = None
+
+        self.fpid_to_tensor_ids = fpid_to_tensor_ids
+        self.fpid_to_version = {}
+        self.version_to_fpid = {}
+        self.version_to_param = {}
+        self.current_version = 0
+        self.fpid_to_rng = {}
     
     def middle_forward_compute(self, data, forward_pass_id):
-        self.forward_pass_id = forward_pass_id
-        print('Middle Forward fpid: ',self.forward_pass_id)
+
+        if self.recompute_thread is not None:
+            if self.recompute_thread.is_alive():
+                self.recompute_thread.join()
+
+        print('Middle Forward fpid: ',forward_pass_id)
         model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.MID)
+
+        rng_state_cpu = torch.get_rng_state()
+        rng_state_gpu = None
+        if self.device.type == 'cuda':
+            rng_state_gpu = torch.cuda.get_rng_state(self.device)
         
-        if not self.model.training:
-            self.model.train()
-                
-        if get_used_gpu_memory() >= self.usable_gpu_memory:
-            with torch.autograd.graph.saved_tensors_hooks(self.pack_hook, self.unpack_hook):
-                output = self.model(*model_args)
-        else:
+        self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
+
+        # print('Active version in forward: ', self.active_version)
+        with torch.no_grad():
             output = self.model(*model_args)
+
+        if self.version_to_fpid.get(self.current_version, None) is not None:
+            self.version_to_fpid[self.current_version].append(forward_pass_id)
+        else:
+            self.version_to_fpid[self.current_version] = [forward_pass_id]
+        
+        self.fpid_to_version[forward_pass_id] = self.current_version
+        if self.current_version not in self.version_to_param:
+            # print('Adding current version in forward: ', self.current_version)
+            self.version_to_param[self.current_version] = self.model.state_dict()
+
         return output
     
     def middle_no_grad_forward_compute(self, data):
@@ -69,14 +94,14 @@ class Compute():
         
         loss = self.criterion(outputs, targets)
         
-        print('Before backward GPU: ')
-        check_gpu_usage()
+        # print('Before backward GPU: ')
+        # check_gpu_usage()
         self.model.zero_grad()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        print('After backward GPU: ')
-        check_gpu_usage()
+        # print('After backward GPU: ')
+        # check_gpu_usage()
 
         print('Loss: ', round(loss.item(), 4))
         f = open("losses.txt", "a")
@@ -85,39 +110,21 @@ class Compute():
         return model_args
 
     def middle_backward_compute(self, gradient_dict, forward_pass_id):
-        self.fpid_to_process_backward = forward_pass_id
-        print('\nMiddle Backward Compute Started', self.fpid_to_process_backward)
+        print('\nMiddle Backward Compute Started', forward_pass_id)
 
-        # if self.current_preload_thread is not None and self.current_preload_thread.is_alive():
-        #     self.current_preload_thread.join()
-        # print('Len of current preload threads', len(self.current_preload_threads))
-        if len(self.current_preload_threads) > 0:
-            for current_preload_thread in self.current_preload_threads:
-                if current_preload_thread.is_alive():
-                    current_preload_thread.join()
-                    print('Joined')
-            self.current_preload_threads = []
-        
-        print('Packin future keys: ', self.packing_futures.keys())
-        if len(self.packing_futures)>0:
-            if self.packing_futures.get(forward_pass_id, None) is not None:
-                wait(self.packing_futures[forward_pass_id])
-                print('Finished waiting for: ', forward_pass_id)
-                del self.packing_futures[forward_pass_id]
-            
-            if self.packing_futures.get(forward_pass_id+1, None) is not None:
-                wait(self.packing_futures[forward_pass_id+1])
-                print('Finished waiting for: ', forward_pass_id+1)
-                del self.packing_futures[forward_pass_id+1]
+        if self.fpid_to_version.get(forward_pass_id, None) is not None:
+            print('Blocking recompute for: ', forward_pass_id)
+            self.recompute_forward(forward_pass_id)
 
+        # for param in self.model.parameters():
+        #     print('Param version before backward: ', param._version)
+        #     break
 
-        # print('self.fpid_to_intermediates.keys(): ', self.fpid_to_intermediates.keys(), forward_pass_id + 1)
-        if self.fpid_to_intermediates.get(forward_pass_id+1, None) is not None:
-            print('Triggering preload thread for: ', forward_pass_id + 1)
-            # self.current_preload_proc = mp.Process(target=self.trigger_parallel_preload_jobs, args=(forward_pass_id+1, self.fpid_to_intermediates[forward_pass_id+1],), daemon=True)
-            self.current_preload_thread = threading.Thread(target=self.trigger_parallel_preload_jobs, args=(forward_pass_id+1, self.fpid_to_intermediates[forward_pass_id+1],), daemon=True)
-            self.current_preload_thread.start()
+        if self.recompute_thread is not None:
+            if self.recompute_thread.is_alive():
+                self.recompute_thread.join()
 
+        # print('Active version in backward: ', self.active_version)
         self.model.zero_grad()
         self.optimizer.zero_grad()
         pass_grad_keys = []
@@ -151,26 +158,56 @@ class Compute():
             else:
                 pass_grad_keys.append(key)
 
-        if self.preload_intermediates_buffer.get(self.fpid_to_process_backward, None) is not None:
-            print('Deleting: ', self.fpid_to_process_backward)
-            del self.preload_intermediates_buffer[self.fpid_to_process_backward]
-             
+        # for param in self.model.parameters():
+        #     print('Param version before step: ', param._version)
+        #     break
+
         load_grads_into_optimizer(self.model, self.optimizer)
         self.optimizer.step()
         load_optim_weights_into_model(self.model, self.optimizer)
 
+        # for param in self.model.parameters():
+        #     print('Param version after step: ', param._version)
+        #     break
+
+        self.current_version += 1
+        self.active_version = self.current_version
+        self.version_to_param[self.current_version] = self.model.state_dict()
+
+        if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
+            self.recompute_thread = threading.Thread(target=self.recompute_forward, args=(forward_pass_id+1,))
+            self.recompute_thread.start()
+
         return pass_grad_keys
 
     def root_forward_compute(self, tensors=None, forward_pass_id=None):
-        self.forward_pass_id = forward_pass_id
-        if not self.model.training:
-            self.model.train()
+        if self.recompute_thread is not None:
+            if self.recompute_thread.is_alive():
+                self.recompute_thread.join()
+
+        rng_state_cpu = torch.get_rng_state()
+        rng_state_gpu = None
+        if self.device.type == 'cuda':
+            rng_state_gpu = torch.cuda.get_rng_state(self.device)
         
-        if get_used_gpu_memory() >= self.usable_gpu_memory:
-            with torch.autograd.graph.saved_tensors_hooks(self.pack_hook, self.unpack_hook):
-                output = self.model(tensors)
-        else:
+        # if not self.model.training:
+        #     self.model.train()
+        
+        self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
+        self.input_tensors[forward_pass_id] = tensors
+        with torch.no_grad():
             output = self.model(tensors)
+
+        if self.version_to_fpid.get(self.current_version, None) is not None:
+            self.version_to_fpid[self.current_version].append(forward_pass_id)
+        else:
+            self.version_to_fpid[self.current_version] = [forward_pass_id]
+
+        self.fpid_to_version[forward_pass_id] = self.current_version
+
+        if self.current_version not in self.version_to_param:
+            # print('Adding current version in root forward: ', self.current_version)
+            self.version_to_param[self.current_version] = self.model.state_dict()
 
         return output
 
@@ -180,6 +217,75 @@ class Compute():
             output = self.model(tensors)
 
         return output
+    
+    def recompute_forward(self, forward_pass_id):
+        print('Recompute Starting for: ', forward_pass_id, self.current_version)
+        recompute_version = self.fpid_to_version[forward_pass_id]
+        # print('Recompute version: ', recompute_version)
+        del self.fpid_to_version[forward_pass_id]
+
+        # for param in self.model.parameters():
+        #     print('Param version in recompute, before load old: ', param._version)
+        #     break
+
+        if self.current_version != recompute_version:
+            # self.model.load_state_dict(self.version_to_param[recompute_version])
+            load_state_dict_conserve_versions(self.model, self.version_to_param[recompute_version])
+            self.active_version = recompute_version
+        # print('Active version in recompute: ', self.active_version)
+        # for param in self.model.parameters():
+        #     print('Param version in recompute, after load old: ', param._version)
+        #     break
+
+        cpu_rng, gpu_rng = self.fpid_to_rng[forward_pass_id]
+        del self.fpid_to_rng[forward_pass_id]
+        devices = []
+
+        if self.device.type == 'cuda':
+            devices.append(self.device)
+        
+        with torch.random.fork_rng(devices=devices):
+            torch.set_rng_state(cpu_rng)
+            if gpu_rng is not None:
+                torch.cuda.set_rng_state(gpu_rng)
+
+            if self.node_type == NodeTypes.ROOT:
+                output = self.model(self.input_tensors[forward_pass_id])
+            else:
+                output = self.model(*self.get_model_args(forward_pass_id))
+
+        for k,v in self.output_template.items():
+            if isinstance(output, tuple):
+                out = output[k]
+            else:
+                out = output
+
+            self.output_tensors[self.fpid_to_tensor_ids[forward_pass_id][k]] = out
+
+        del self.fpid_to_tensor_ids[forward_pass_id]
+
+        self.version_to_fpid[recompute_version].remove(forward_pass_id)
+        if len(self.version_to_fpid[recompute_version]) == 0:
+            del self.version_to_fpid[recompute_version]
+            del self.version_to_param[recompute_version]
+
+        # for param in self.model.parameters():
+        #     print('Param version after recompute and before reload: ', param._version)
+        #     break
+
+        if self.current_version != recompute_version:
+            # print('Current version before load state: ', forward_pass_id, self.current_version)
+            # with torch.no_grad():
+            #     self.model.load_state_dict(self.version_to_param[self.current_version])
+            load_state_dict_conserve_versions(self.model, self.version_to_param[self.current_version])
+            self.active_version = self.current_version
+
+        # print('Active version in recompute end: ', self.active_version)
+        # for param in self.model.parameters():
+        #     print('Param version after recompute and after reload: ', param._version)
+        #     break
+        print('Recompute Finished for: ', forward_pass_id)
+
 
     def create_model_args(self, data, forward_pass_id=None, node_type=None):
         if node_type != NodeTypes.LEAF:
@@ -199,11 +305,11 @@ class Compute():
 
                             if data[k][arg_pos]['data'].device.type != self.device:
                                 data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)
-                                data[k][arg_pos]['data'].retain_grad()
+                                data[k][arg_pos]['data'].requires_grad_()
 
                             model_args.append(data[k][arg_pos]['data'])
-                            if node_type != NodeTypes.LEAF:
-                                self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
+                            # if node_type != NodeTypes.LEAF:
+                            self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
 
                             data[k][arg_pos]['target'].remove(self.submod_file)
 
@@ -220,12 +326,12 @@ class Compute():
                                 
                                 if data[k][v]['data'].device.type != self.device:
                                     data[k][v]['data'] = data[k][v]['data'].to(self.device)
-                                    data[k][v]['data'].retain_grad()
+                                    data[k][v]['data'].requires_grad_()
 
                                 model_args.append(data[k][v]['data'])
-                                if node_type != NodeTypes.LEAF:
-                                    if k != 'model_inputs':
-                                        self.input_tensors[forward_pass_id][tensor_id] = data[k][v]['data']                                 
+                                # if node_type != NodeTypes.LEAF:
+                                # if k != 'model_inputs':
+                                self.input_tensors[forward_pass_id][tensor_id] = data[k][v]['data']                                 
                             
                         data[k][v]['target'].remove(self.submod_file)
 
@@ -249,7 +355,7 @@ class Compute():
 
                             if data[k][arg_pos]['data'].device.type != self.device:
                                 data[k][arg_pos]['data'] = data[k][arg_pos]['data'].to(self.device)    
-                                data[k][arg_pos]['data'].retain_grad()                        
+                                data[k][arg_pos]['data'].requires_grad_()                     
 
                             model_args[tensor_id] = data[k][arg_pos]['data']
                             if node_type != NodeTypes.LEAF:
@@ -269,7 +375,7 @@ class Compute():
                             if isinstance(v, int):
                                 if data[k][v]['data'].device.type != self.device:
                                     data[k][v]['data'] = data[k][v]['data'].to(self.device) 
-                                    data[k][v]['data'].retain_grad()                            
+                                    data[k][v]['data'].requires_grad_()                            
                                 model_args[tensor_id] = data[k][v]['data']    
                             
                         data[k][v]['target'].remove(self.submod_file)
@@ -280,6 +386,13 @@ class Compute():
                         if len(data[k]) == 0:
                             del data[k]
         return model_args
+
+    def get_model_args(self, forward_pass_id):
+        model_args = []
+        for tid, input in self.input_tensors[forward_pass_id].items():
+            model_args.append(input)
+
+        return tuple(model_args)
 
     def create_no_grad_model_args(self, data):
         model_args = []
@@ -322,72 +435,3 @@ class Compute():
                         del data[k]
             
         return model_args
-
-    def pack_hook(self, tensor):
-        temp_file_name = '{}_aux/{}.pt'.format(self.name, self.tid)
-        temp_file = SelfDeletingTempFile(name=temp_file_name)
-        packing_future = self.packing_threadpool.submit(torch.save, tensor.cpu(), temp_file_name)#, pickle_module=pickle, pickle_protocol=pickle.HIGHEST_PROTOCOL)
-        
-        if self.packing_futures.get(self.forward_pass_id,None) is not None:
-            self.packing_futures[self.forward_pass_id].append(packing_future)
-        else:
-            self.packing_futures[self.forward_pass_id] = [packing_future]
-
-        # torch.save(tensor, temp_file.name, pickle_module=pickle, pickle_protocol=pickle.HIGHEST_PROTOCOL)
-        self.tid += 1
-        # print('Packing: ', self.forward_pass_id, temp_file.name)
-        if self.fpid_to_intermediates.get(self.forward_pass_id, None) is not None:
-            self.fpid_to_intermediates[self.forward_pass_id].append(temp_file.name)
-        else:
-            self.fpid_to_intermediates[self.forward_pass_id] = [temp_file.name]
-        return temp_file
-
-    def unpack_hook(self, file):
-        # print('Unpacking: ', self.fpid_to_process_backward, file.name)
-        if self.preload_intermediates_buffer.get(self.fpid_to_process_backward, None) is not None:
-            tensor = self.preload_intermediates_buffer[self.fpid_to_process_backward][file.name]
-            return tensor
-        return torch.load(file.name, map_location = self.device)
-
-    def trigger_parallel_preload_jobs(self, next_fpid, intermediate_tensors):
-        print('Process started next_fpid: ', next_fpid)
-        k, m = divmod(len(intermediate_tensors), 3)
-        chunked_list = (intermediate_tensors[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(3))
-        # preload_threads = []
-        for chunk in chunked_list:
-            t = threading.Thread(target=self.populate_preload_buffer, args=(next_fpid, chunk))
-            # preload_threads.append(t)
-            self.current_preload_threads.append(t)
-            t.start()
-        
-        # for thread in preload_threads:
-        #     thread.join()
-        # self.populate_preload_buffer(next_fpid, intermediate_tensors)
-        print('Process ended')
-        
-
-    
-    def populate_preload_buffer(self, next_fpid, intermediate_tensors):
-        fpid_preload_buffer = {}
-        for file_name in intermediate_tensors:
-            # print('file_name in ppb: ', file_name, next_fpid)
-            fpid_preload_buffer[file_name] = torch.load(file_name, map_location = self.device)
-
-        # self.preload_lock.acquire()
-        if self.preload_intermediates_buffer.get(next_fpid, None) is not None:
-            self.preload_intermediates_buffer[next_fpid].update(fpid_preload_buffer)
-        else:
-            self.preload_intermediates_buffer[next_fpid] = fpid_preload_buffer
-        # print('populate_preload_buffer done for: ', next_fpid)#, self.preload_intermediates_buffer[5].keys())
-        # self.preload_lock.release()
-
-    
-    def __getstate__(self):
-        return dict(
-            preload_lock = self.preload_lock,
-            preload_intermediates_buffer = self.preload_intermediates_buffer
-        )
-
-    def __setstate__(self, state):
-        self.preload_lock = state['preload_lock']
-        self.preload_intermediates_buffer = state['preload_intermediates_buffer']
