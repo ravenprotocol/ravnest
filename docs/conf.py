@@ -22,6 +22,7 @@ github_url = 'https://github.com/ravenprotocol/ravnest'
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = ['sphinx.ext.autodoc', 
+              'sphinx.ext.viewcode',
               'myst_parser', 
               'sphinx_copybutton',
               'sphinx_rtd_theme']
