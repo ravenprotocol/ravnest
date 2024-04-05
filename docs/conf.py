@@ -31,6 +31,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 autodoc_mock_imports = ['torch',
                         'grpcio',
+                        'grpc',
                         'grpcio-tools',
                         'numpy',
                         'protobuf',
