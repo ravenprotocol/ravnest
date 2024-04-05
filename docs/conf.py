@@ -16,7 +16,7 @@ copyright = '2024, Raven Protocol'
 author = 'Raven Protocol'
 
 version = 'latest'
-
+github_url = 'https://github.com/ravenprotocol/ravnest'
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
