@@ -320,6 +320,11 @@ def delete_all_folders(path):
             shutil.rmtree(folder_path)
 
 def clusterize(model=None):
+    """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
+
+    :param model: Pytorch Model, defaults to None
+    :raises ValueError: If the sum of the node RAMs in a cluster does not exceed full model's size.
+    """        
     random.seed(42)
     np.random.seed(42)
 
