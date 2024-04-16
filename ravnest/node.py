@@ -6,7 +6,6 @@ import multiprocessing
 import threading
 from threading import Thread
 import numpy as np
-import shutil
 import psutil
 import pickle
 import time
@@ -22,10 +21,7 @@ mp = multiprocessing.get_context('spawn')
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, criterion=None, 
-                 labels=None, test_labels=None, device = torch.device('cpu'), gpu_usage_limit=0.75, **kwargs):
-
-        self.usable_gpu_memory = 1 #gpu_usage_limit * torch.cuda.get_device_properties(0).total_memory
-        
+                 labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -36,7 +32,7 @@ class Node():
         self.name = name
 
         self.reset()
-        
+
         self.model = model
         self.device = device
 
@@ -85,6 +81,10 @@ class Node():
                 self.param_address_mapping[param_name] = address_to_param[0]
 
         self.criterion = criterion
+
+        if test_labels is not None:
+            self.test_labels = test_labels
+            self.test_labels_iterator = None
         
         if labels is not None:
             self.labels = labels
@@ -92,13 +92,6 @@ class Node():
                 self.labels_iterator = labels
             else:
                 self.labels_iterator = iter(labels)
-        
-        if test_labels is not None:
-            self.test_labels = test_labels
-            if isinstance(test_labels, torch.Tensor):
-                self.test_labels_iterator = test_labels
-            else:
-                self.test_labels_iterator = iter(test_labels)
 
         self.net_val_accuracy = []
 
@@ -110,6 +103,7 @@ class Node():
         self.output_tensors = {}
         self.input_tensors = {}
         self.n_backwards = 0
+        self.n_forwards = 0
         self.forward_pass_id = 0
 
         self.reduce_threshold = 8
@@ -140,22 +134,12 @@ class Node():
                 self.node_type = NodeTypes.MID
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
 
-        self.fpid_to_tensor_ids = {}
-
-        self.compute_session = Compute(name=self.name,
-                                       model=self.model,
-                                       optimizer=self.optimizer,
-                                       device=self.device,
-                                       node_type = self.node_type,
-                                       output_template = self.output_template,
-                                       usable_gpu_memory=self.usable_gpu_memory,
-                                       input_tensors=self.input_tensors,
-                                       output_tensors=self.output_tensors,
-                                       fpid_to_tensor_ids = self.fpid_to_tensor_ids,
-                                       submod_file=self.submod_file,
-                                       criterion=self.criterion,
-                                       input_template=self.input_template
-                                       )
+        self.compute_session = Compute(model = self.model, optimizer = self.optimizer, 
+                                        criterion=self.criterion,
+                                        input_tensors = self.input_tensors, 
+                                        tensor_id = self.tensor_id, output_template = self.output_template, 
+                                        input_template = self.input_template, node_type=self.node_type,
+                                        submod_file=self.submod_file, device = self.device)
 
         self.comm_session = Communication(name=self.name,
                                           model=self.model,
@@ -173,7 +157,6 @@ class Node():
                                           backward_target_port=self.backward_target_port, 
                                           output_tensors=self.output_tensors, 
                                           input_tensors=self.input_tensors,
-                                          fpid_to_tensor_ids = self.fpid_to_tensor_ids,
                                           reduce_ring_buffers=self.reduce_ring_buffers, 
                                           gather_ring_buffers=self.gather_ring_buffers,
                                           reduce_iteration=self.reduce_iteration, 
@@ -265,8 +248,11 @@ class Node():
                     print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
                     self.n_backwards += 1
 
-                    if self.n_backwards % self.reduce_threshold == 0:
-                        self.comm_session.parallel_ring_reduce()
+                    # if self.n_backwards % self.reduce_threshold == 0:
+                    #     self.comm_session.parallel_ring_reduce()
+
+                    # if self.device.type == 'cuda':
+                    #     torch.cuda.synchronize()
 
             self.node_status = NodeStatus.IDLE
 
@@ -280,22 +266,23 @@ class Node():
                 if action == ActionTypes.FORWARD and self.node_type == NodeTypes.LEAF:
                     action = ActionTypes.FIND_LOSS
                 if action == ActionTypes.NO_GRAD_FORWARD and self.node_type == NodeTypes.LEAF:
-                    action = ActionTypes.ACCURACY
+                    action = ActionTypes.VAL_ACCURACY
 
                 if action == ActionTypes.ROOT_FORWARD:
                     data_id = value['data_id']
                     tensors = value['data']
+
                     tensors = tensors.to(self.device)
 
                     self.node_status = NodeStatus.FORWARD
 
-                    # print('Before Root Forward: ')
-                    # check_gpu_usage()
+                    print('Before Root Forward: ')
+                    check_gpu_usage()
                     output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id)
-                    # print('After Root Forward: ')
-                    # check_gpu_usage()
+                    print('After Root Forward: ')
+                    check_gpu_usage()
 
-                    payload = self.comm_session.create_forward_payload(output, tensors=tensors, forward_pass_id = self.forward_pass_id)
+                    payload = self.comm_session.create_forward_payload(output, tensors=tensors)
 
                     final_payload = {}
                     final_payload[self.submod_file] = payload
@@ -309,6 +296,7 @@ class Node():
                     print('Forward compute done for: ', self.forward_pass_id)
                     self.forward_pass_id += 1
                     self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+                    self.n_forwards += 1
                     # print('Forward compute done for: ', self.tensor_id)
                     self.root_compute = True
                     self.node_status = NodeStatus.IDLE
@@ -318,13 +306,9 @@ class Node():
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
                     
-                    # print('Before Forward: ')
-                    # check_gpu_usage()
                     output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
-                    # print('After Forward: ')
-                    # check_gpu_usage()
 
-                    payload = self.comm_session.create_forward_payload(output, forward_pass_id = forward_pass_id)
+                    payload = self.comm_session.create_forward_payload(output)
 
                     final_payload = data
                     final_payload[self.submod_file] = payload
@@ -337,12 +321,13 @@ class Node():
                     t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
                     send_trigger_threads.append(t)
                     t.start()
-
+                    self.n_forwards += 1
                     print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
 
                 elif action == ActionTypes.FIND_LOSS:
                     self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
+
                     if isinstance(self.labels, torch.Tensor):
                         targets = self.labels[data_id:data_id+value['input_size']]
                         targets = targets.to(self.device)
@@ -351,9 +336,10 @@ class Node():
                         if targets is None:
                             self.labels_iterator = iter(self.labels)
                             targets = next(self.labels_iterator)
+                            print('\n ---------------------- Reset Data Iterator ------------------------')
 
                         targets = targets[1].to(self.device)
-
+                    
                     data = value['data']
                     model_args = self.compute_session.leaf_find_loss(data, targets=targets)
                     gradients = self.comm_session.create_backward_payload(model_args=model_args)
@@ -368,19 +354,20 @@ class Node():
 
                     # print('find_loss done. Used RAM %: ', psutil.virtual_memory().percent)
                     self.n_backwards += 1
+                    # print('N_backwards: ', self.n_backwards)
 
-                    if self.n_backwards % self.reduce_threshold == 0:
-                        self.comm_session.parallel_ring_reduce()
+                    # if self.n_backwards % self.reduce_threshold == 0:
+                    #     self.comm_session.parallel_ring_reduce()
+
+                    # if self.device.type == 'cuda':
+                    #     # print('Sync')
+                    #     torch.cuda.synchronize()
 
                 elif action == ActionTypes.NO_GRAD_FORWARD:
                     # self.comm_session.parallel_ring_reduce()
                     self.node_status = NodeStatus.FORWARD
                     print('No grad forward')
                     data = value['data']
-                    # model_args = self.compute_session.create_no_grad_model_args(data)
-                    # self.model.eval()            
-                    # with torch.no_grad():
-                    #     output = self.model(*model_args)
                     output = self.compute_session.middle_no_grad_forward_compute(data)
                     payload = self.comm_session.create_no_grad_forward_payload(output)
 
@@ -398,6 +385,12 @@ class Node():
                 elif action == ActionTypes.VAL_ACCURACY:
                     data = value['data']
                     model_args = self.compute_session.create_no_grad_model_args(data)
+
+                    if self.test_labels_iterator is None:
+                        if isinstance(self.test_labels, torch.Tensor):
+                            self.test_labels_iterator = self.test_labels
+                        else:
+                            self.test_labels_iterator = iter(self.test_labels)
                     
                     self.model.eval()
                     with torch.no_grad():
@@ -412,7 +405,7 @@ class Node():
                         y_test = y_test[1].to(self.device)
 
                         #for cnn
-                        y_test = torch.argmax(y_test, dim=1)
+                        # y_test = torch.argmax(y_test, dim=1)
 
                         correct_pred = (y_pred_tags == y_test).float()
                         val_acc = correct_pred.sum() / len(y_test)
@@ -429,7 +422,7 @@ class Node():
 
 
                 elif action == ActionTypes.ACCURACY:
-                    self.comm_session.parallel_ring_reduce()
+                    # self.comm_session.parallel_ring_reduce()
                     print('Finding accuracy')
                     data = value['data']
                     model_args = self.compute_session.create_no_grad_model_args(data)
@@ -477,33 +470,10 @@ class Node():
 
         while not self.root_compute:
             time.sleep(0)
-        # tensors = tensors.to(self.device)
-
-        # self.node_status = NodeStatus.FORWARD
-
-        # output = self.compute_session.root_forward_compute(tensors)
-
-        # payload = self.comm_session.create_forward_payload(output, tensors=tensors)
-
-        # final_payload = {}
-        # final_payload[self.submod_file] = payload
-
-        # sent_data = {'data_id':data_id,
-        #             'forward_pass_id':self.forward_pass_id,
-        #             'data': final_payload,
-        #             'input_size': tensors.shape[0],
-        #             'action': ActionTypes.FORWARD}
-        
-        # self.forward_pass_id += 1
-        # self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
-        # print('Forward compute done for: ', self.tensor_id)
-        # self.node_status = NodeStatus.IDLE
-
-        
 
     def no_grad_forward_compute(self, tensors=None, output_type=None):
         tensors = tensors.to(self.device)
-        self.comm_session.parallel_ring_reduce()
+        # self.comm_session.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
         
         output = self.compute_session.root_no_grad_forward_compute(tensors=tensors)
@@ -522,6 +492,10 @@ class Node():
         print('No Grad forward compute done')
         self.node_status = NodeStatus.IDLE
 
+    def wait_for_backwards(self):
+        while self.n_backwards < self.n_forwards:
+            time.sleep(1)
+
     def trigger_save_submodel(self):
         script = torch.jit.script(self.model)
         os.makedirs('trained_submodels', exist_ok=True)
@@ -537,7 +511,7 @@ class Node():
             os.remove('losses.txt')
         if os.path.exists('val_accuracies.txt'):
             os.remove('val_accuracies.txt')
-        
+
 
     def __getstate__(self):
         return dict(

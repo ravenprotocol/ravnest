@@ -12,6 +12,8 @@ from .node import Node
 import numpy as np
 import random
 import json
+import os
+import shutil
 import copy
 
 def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_variants=None):
@@ -243,7 +245,7 @@ def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths
     compiled_input_dict = {}
     compiled_output_dict = {'model_inputs':{}}
     for node in pipe.split_gm.graph.nodes:
-        print(node.name, node.args)
+        # print(node.name, node.args)
         if 'submod' in node.name:
             input_dict = {}
             compiled_output_dict[node.name] = {}
@@ -303,10 +305,138 @@ def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths
         # print('key in compiled dict: ', l, k)
         with open('{}/{}/{}_input.pkl'.format(cluster_path, node_paths[int(k)],key), 'wb') as file:
             pickle.dump(value,file)
-            
+
+    print('\nSubmodels are Saved in: ')        
     for key, val in pipe.split_gm._modules.items():
         script = torch.jit.script(val)
         k = key.split('_')[-1]
         print('{}/{}/{}.pt'.format(cluster_path, node_paths[int(k)], key))
         script.save('{}/{}/submod.pt'.format(cluster_path, node_paths[int(k)]))
 
+def delete_all_folders(path):
+    for folder in os.listdir(path):
+        folder_path = os.path.join(path, folder)
+        if os.path.isdir(folder_path):
+            shutil.rmtree(folder_path)
+
+def clusterize(model=None):
+    """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
+
+    :param model: Pytorch Model, defaults to None
+    :raises ValueError: If the sum of the node RAMs in a cluster does not exceed full model's size.
+    """        
+    random.seed(42)
+    np.random.seed(42)
+
+    path = 'node_data/'
+    delete_all_folders(path)
+
+    node_pool = spawn_node_pool(mode='load_from_configs')
+
+    cluster_pool = cluster_formation(full_model_size=len(model.state_dict()), node_pool=node_pool)
+
+    for node in node_pool:
+        node_path = 'node_data/cluster_{}/{}'.format(node.cluster_id, node.address)
+        if not os.path.exists(node_path):
+            os.makedirs(node_path)
+        if not os.path.exists('node_data/nodes'):
+            os.makedirs('node_data/nodes')
+
+    for cluster in cluster_pool:
+        model_input_node = cluster.nodes[list(cluster.nodes.keys())[0]].address
+        cluster_node_ip_addresses = []
+        for node_id, metadata in cluster.nodes.items():
+            cluster_node_ip_addresses.append(metadata.address)
+        
+        for i in range(len(cluster_node_ip_addresses)):
+            for node in node_pool:
+                if node.address == cluster_node_ip_addresses[i]:
+                    current_node = node
+                    break
+            if i < len(cluster_node_ip_addresses) - 1:
+                current_node.forward_target_host = cluster_node_ip_addresses[i+1].split(':')[0]
+                current_node.forward_target_port = cluster_node_ip_addresses[i+1].split(':')[1]
+            if i > 0 and i < len(cluster_node_ip_addresses):
+                current_node.backward_target_host = cluster_node_ip_addresses[i-1].split(':')[0]
+                current_node.backward_target_port = cluster_node_ip_addresses[i-1].split(':')[1]
+
+        split_model_equal(model=model,
+                        num_splits=len(cluster.nodes), 
+                        cluster_path='node_data/cluster_{}'.format(cluster.cid), 
+                        node_paths=cluster_node_ip_addresses,
+                        model_input_node = model_input_node)
+        
+    for node in node_pool:
+        node.set_submodel()
+        # print('\n Node id: ', node.node_id, ' params: ', node.submodel.state_dict().keys())
+
+    max_c = None
+    max_l = 0
+    for cluster in cluster_pool:
+        if cluster.size > max_l:
+            max_l = cluster.size
+            max_c = cluster
+
+    print('\nNo. rings: ', max_l)
+    rid = 0
+    for nid, node in max_c.nodes.items():
+        node.set_trainable_parameter_keys()
+        node.ring_ids[rid] = node.trainable_param_keys[0]
+        rid += 1
+
+    max_c.set_ringwise_params()
+
+    max_ring_size = {} 
+    for cluster in cluster_pool:
+        if cluster.cid != max_c.cid:
+            for nid, node in cluster.nodes.items():
+                current_ring_id = None
+                node.set_trainable_parameter_keys()
+                for k in node.trainable_param_keys:
+                    if current_ring_id != max_c.all_param_to_ring[k]:
+                        node.ring_ids[max_c.all_param_to_ring[k]] = k
+                        current_ring_id = max_c.all_param_to_ring[k]
+
+        for _,node in cluster.nodes.items():
+            print(node.ring_ids)
+            for key in node.ring_ids:
+                max_ring_size[key] = max_ring_size.get(key, 0) + 1
+        
+    max_ring_size_value = max(max_ring_size.values())
+
+    for cl in range(len(cluster_pool)):
+        cluster = cluster_pool[cl]
+        if cl == len(cluster_pool) - 1:
+            next_cluster = cluster_pool[0]
+        else:
+            next_cluster = cluster_pool[cl + 1]
+
+        for nid, node in cluster.nodes.items():
+            current_address = None
+            for k in node.trainable_param_keys:
+                for n_nid, n_node in next_cluster.nodes.items():
+                    if k in n_node.trainable_param_keys:
+                        if current_address != n_node.address:
+                            node.address_to_param[n_node.address] = k
+                            current_address = n_node.address
+
+    print('\n------------------------------------------------')
+    for node in node_pool:
+        print(node)
+        node_meta = {}
+        node_meta['node_id'] = node.node_id
+        node_meta['local_host'] = node.address.split(':')[0]
+        node_meta['local_port'] = int(node.address.split(':')[1])
+        node_meta['template_path'] = 'node_data/cluster_{}/{}/'.format(node.cluster_id, node.address)
+        node_meta['rank'] = node.cluster_id
+        node_meta['ring_size'] = max_ring_size_value
+        node_meta['param_addresses'] = node.address_to_param,
+        node_meta['ring_ids'] = {int(key): value for key, value in node.ring_ids.items()}
+        node_meta['forward_target_host'] = node.forward_target_host
+        node_meta['forward_target_port'] = int(node.forward_target_port) if node.forward_target_port is not None else None
+        node_meta['backward_target_host'] = node.backward_target_host
+        node_meta['backward_target_port'] = int(node.backward_target_port) if node.backward_target_port is not None else None
+
+        with open('node_data/nodes/node_{}.json'.format(node.node_id), 'w') as fp:
+            json.dump(node_meta, fp)
+    print('\nClusters Formed Successfully!')

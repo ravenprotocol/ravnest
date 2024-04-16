@@ -11,7 +11,7 @@ class Communication():
                  param_address_mapping=None, reduce_lock=None, gather_lock=None,
                  forward_target_host=None, forward_target_port=None, 
                  backward_target_host=None, backward_target_port=None, 
-                 output_tensors=None, input_tensors=None, fpid_to_tensor_ids = None,
+                 output_tensors=None, input_tensors=None,
                  reduce_ring_buffers=None, gather_ring_buffers=None,
                  reduce_iteration=None, gather_iteration=None,
                  submod_file=None, tensor_id=None, averaged_params_buffer=None,
@@ -31,7 +31,6 @@ class Communication():
 
         self.input_tensors = input_tensors
         self.output_tensors = output_tensors
-        self.fpid_to_tensor_ids = fpid_to_tensor_ids
 
         self.forward_target_host = forward_target_host
         self.forward_target_port = forward_target_port
@@ -81,7 +80,7 @@ class Communication():
                     grad_payload[key] = value.grad.to(torch.device('cpu'))
         return grad_payload
 
-    def create_forward_payload(self, output, tensors=None, forward_pass_id = None):
+    def create_forward_payload(self, output, tensors=None):
         payload = self.output_template.copy()
         for k, v in payload.items():
             if isinstance(output, tuple):
@@ -90,16 +89,12 @@ class Communication():
                 out = output
             payload[k]['data'] = out.to(torch.device('cpu'))
             payload[k]['tensor_id'] = self.tensor_id
-            # self.output_tensors[self.tensor_id] = out
-            if self.fpid_to_tensor_ids.get(forward_pass_id, None) is not None:
-                self.fpid_to_tensor_ids[forward_pass_id].append(self.tensor_id)
-            else:
-                self.fpid_to_tensor_ids[forward_pass_id] = [self.tensor_id]
-            
+            # if self.node_type != NodeTypes.ROOT:
+            #     self.output_tensors[self.tensor_id] = out
             self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
 
         if self.node_type == NodeTypes.ROOT:
-            payload['model_inputs'] = self.model_inputs_template
+            payload['model_inputs'] = self.model_inputs_template.copy()
             for k, v in self.model_inputs_template.items():
                 if payload['model_inputs'][k].get('target', None) is not None:
                     payload['model_inputs'][k]['data'] = tensors[k]
@@ -239,10 +234,9 @@ class Communication():
             payload[k]['data'] = out.to(torch.device('cpu'))
             
         if self.node_type == NodeTypes.ROOT:
-            payload['model_inputs'] = self.model_inputs_template
+            payload['model_inputs'] = self.model_inputs_template.copy() #Changed to copy
             for k, v in self.model_inputs_template.items():
                 if payload['model_inputs'][k].get('target', None) is not None:
                     payload['model_inputs'][k]['data'] = tensors[k]
 
         return payload
-    

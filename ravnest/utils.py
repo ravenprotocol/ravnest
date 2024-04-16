@@ -2,9 +2,10 @@ import os
 import json
 import torch
 import asyncio
-import numpy as np
 import nvidia_smi
+import numpy as np
 import _pickle as cPickle
+from contextlib import contextmanager
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from .protos.tensor_pb2 import TensorChunk, SendTensor
 from .protos.server_pb2 import ReduceChunk, DataChunk
@@ -94,9 +95,11 @@ def get_trainable_param_names(model):
 
 @torch.no_grad()
 def load_state_dict_conserve_versions(model, state_dict):
-    model_state_dict = model.state_dict(keep_vars=True)
-    for k, v in state_dict.items():
-        model_state_dict[k].data = v.data
+    # model_state_dict = model.state_dict(keep_vars=True)
+    # for k, v in state_dict.items():
+    #     model_state_dict[k].data = v.data
+    for name, param in model.named_parameters():
+        param.data = state_dict[name].data
 
 def load_node_json_configs(node_name=None):
     with open('node_data/nodes/{}.json'.format(node_name)) as f:
@@ -125,24 +128,6 @@ def create_chunks(data, size):
         chunked_data[key]['split_axis'] = split_axis
 
     return chunked_data
-
-class SelfDeletingTempFile():
-    def __init__(self, name=None):
-        self.name = name
-
-    def __del__(self):
-        os.remove(self.name)
-
-def get_used_gpu_memory():
-    nvidia_smi.nvmlInit()
-    deviceCount = nvidia_smi.nvmlDeviceGetCount()
-    used_memory = []
-    for i in range(deviceCount):
-        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
-        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-        used_memory.append(info.used)
-    nvidia_smi.nvmlShutdown()
-    return used_memory[0]
 
 def check_gpu_usage():
     nvidia_smi.nvmlInit()
