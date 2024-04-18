@@ -413,6 +413,7 @@ def clusterize(model=None):
 
         for nid, node in cluster.nodes.items():
             current_address = None
+            node.cluster_length = len(cluster.nodes)
             for k in node.trainable_param_keys:
                 for n_nid, n_node in next_cluster.nodes.items():
                     if k in n_node.trainable_param_keys:
@@ -430,6 +431,7 @@ def clusterize(model=None):
         node_meta['template_path'] = 'node_data/cluster_{}/{}/'.format(node.cluster_id, node.address)
         node_meta['rank'] = node.cluster_id
         node_meta['ring_size'] = max_ring_size_value
+        node_meta['cluster_length'] = node.cluster_length
         node_meta['param_addresses'] = node.address_to_param,
         node_meta['ring_ids'] = {int(key): value for key, value in node.ring_ids.items()}
         node_meta['forward_target_host'] = node.forward_target_host

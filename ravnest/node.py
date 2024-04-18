@@ -8,6 +8,7 @@ from threading import Thread
 import numpy as np
 import psutil
 import pickle
+import shutil
 import time
 from .communication import Communication
 from .compute import Compute
@@ -105,6 +106,7 @@ class Node():
         self.n_backwards = 0
         self.n_forwards = 0
         self.forward_pass_id = 0
+        self.latest_backward_id = 0
 
         self.reduce_threshold = 8
 
@@ -114,6 +116,8 @@ class Node():
 
         self.averaged_params_buffer = {}
         self.average_no = 0
+
+        self.cluster_length = kwargs['cluster_length']
 
         if kwargs.get('submod_file', None) is not None:
             with open('{}{}_input.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
@@ -175,7 +179,7 @@ class Node():
                     reduce_ring_buffers = None, gather_ring_buffers = None, 
                     forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None,
                     reduce_iteration = None, gather_iteration = None):
-        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         add_CommServerServicer_to_server(GrpcService(
             load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, 
             reduce_ring_buffers=reduce_ring_buffers, gather_ring_buffers=gather_ring_buffers,
@@ -220,6 +224,8 @@ class Node():
                     self.node_status = NodeStatus.BACKWARD
                     gradient_dict = value['data']
                     forward_pass_id = value['forward_pass_id']
+                    self.latest_backward_id = forward_pass_id
+                    print('Start of backward: ', forward_pass_id)
                     pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id)
                     
                     if self.node_type != NodeTypes.ROOT:
@@ -305,6 +311,7 @@ class Node():
                     self.node_status = NodeStatus.FORWARD
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
+                    print('Start of forward: ', forward_pass_id)
                     
                     output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
 
@@ -337,6 +344,10 @@ class Node():
                             self.labels_iterator = iter(self.labels)
                             targets = next(self.labels_iterator)
                             print('\n ---------------------- Reset Data Iterator ------------------------')
+
+                        # print('For: ', value['forward_pass_id'])
+                        # print('X_train: ', targets[0][0][0])
+                        # print('y_train: ', targets[1])
 
                         targets = targets[1].to(self.device)
                     
@@ -462,6 +473,10 @@ class Node():
     def forward_compute(self, data_id=None, tensors=None):
         data = {'data':tensors, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
 
+
+        while self.forward_pass_id - self.latest_backward_id > self.cluster_length:
+            time.sleep(0)
+        
         self.forward_lock.acquire(block=True)
         self.load_forward_buffer.append(data)
         self.forward_lock.release()
