@@ -4,14 +4,18 @@ import time
 from ravnest.node import Node
 from ravnest.utils import load_node_json_configs
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from TinyImageNet import TinyImageNet
 import numpy as np
 import random
 
-torch.manual_seed(42)
-np.random.seed(42)
 random.seed(42)
+torch.manual_seed(42)
+# torch.manual_seed_all(42)
+torch.random.manual_seed(42)
+torch.cuda.manual_seed(42)
+torch.cuda.manual_seed_all(42)
+np.random.seed(42)
 
 def get_dataset(root=None):
 
@@ -20,22 +24,26 @@ def get_dataset(root=None):
 
     training_transform = transforms.Compose([
         transforms.Lambda(lambda x: x.convert("RGB")),
-        # transforms.RandomResizedCrop(224),
+        transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         normalize])
 
     valid_transform = transforms.Compose([
         transforms.Lambda(lambda x: x.convert("RGB")),
-        # transforms.Resize(256),
-        # transforms.CenterCrop(224),
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
         transforms.ToTensor(),
         normalize])
 
     in_memory = False
 
+    generator = torch.Generator()
+    generator.manual_seed(42)
+
     training_set = TinyImageNet(root, 'train', transform=training_transform, in_memory=in_memory)
-    train_loader = DataLoader(training_set, batch_size=100, shuffle=True, num_workers=0)
+    # train_subset = Subset(training_set, range(1000))
+    train_loader = DataLoader(training_set, batch_size=100, shuffle=True, generator=generator, num_workers=0)
 
     val_set = TinyImageNet(root, 'val', transform=valid_transform, in_memory=in_memory)
     val_loader = DataLoader(val_set, batch_size=100, shuffle=False, num_workers=0)
@@ -62,7 +70,6 @@ if __name__ == '__main__':
                 labels = train_loader,
                 test_labels = val_loader,
                 device=torch.device('cuda'),
-                gpu_usage_limit = 0.25,
                 **node_metadata
                 )
 

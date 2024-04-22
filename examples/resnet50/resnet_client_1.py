@@ -1,8 +1,18 @@
 # Note: Place the tiny-imagenet-200 Dataset in home directory
 import torch
 import time
+import random
+import numpy as np
 from ravnest.node import Node
 from ravnest.utils import load_node_json_configs
+
+random.seed(42)
+torch.manual_seed(42)
+# torch.manual_seed_all(42)
+torch.random.manual_seed(42)
+torch.cuda.manual_seed(42)
+torch.cuda.manual_seed_all(42)
+np.random.seed(42)
 
 if __name__ == '__main__':
     
@@ -18,7 +28,6 @@ if __name__ == '__main__':
                 optimizer = optimizer, 
                 optimizer_params = optimizer_params,
                 device=torch.device('cuda'),
-                gpu_usage_limit = 0.25,
                 **node_metadata
                 )
 
