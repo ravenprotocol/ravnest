@@ -3,7 +3,7 @@ import numpy as np
 import time
 
 class Trainer():
-    def __init__(self, node=None, train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
+    def __init__(self, node=None, lr_scheduler=None, lr_scheduler_params={}, train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
         self.node = node
         self.train_loader = train_loader
 
@@ -15,6 +15,9 @@ class Trainer():
         self.step_size = step_size
         self.n_forwards = 0
         self.inputs_dtype = inputs_dtype
+        self.lr_scheduler=None
+        if lr_scheduler is not None:
+            self.lr_scheduler = lr_scheduler(self.node.optimizer, **lr_scheduler_params)
 
     def train(self):
         t1 = time.time()
@@ -39,11 +42,13 @@ class Trainer():
                 data_id += (self.batch_size // self.step_size)
             
             if self.val_loader is not None: 
-                if self.n_forwards % self.val_freq == 0:
-                    for X_test, y_test in self.val_loader:
-                        self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
+                # if self.n_forwards % self.val_freq == 0:
+                for X_test, y_test in self.val_loader:
+                    self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
 
             self.node.wait_for_backwards()
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.step()
             print('Epoch: ', epoch)
             # print('n_forward: ', self.n_forwards, '  node.n_backward: ', self.node.n_backwards)
         
@@ -58,3 +63,7 @@ class Trainer():
         else:
             pred = self.node.no_grad_forward_compute(tensors=torch.tensor(input.numpy(), dtype=torch.float32), output_type='accuracy')
         return pred
+    
+    def evaluate(self):
+        for X_test, y_test in self.val_loader:
+            self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')

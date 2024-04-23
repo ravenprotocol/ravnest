@@ -21,7 +21,7 @@ from .protos.server_pb2_grpc import add_CommServerServicer_to_server
 mp = multiprocessing.get_context('spawn')
 
 class Node():
-    def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, criterion=None, 
+    def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, criterion=None, 
                  labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
@@ -138,6 +138,10 @@ class Node():
                 self.node_type = NodeTypes.MID
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
 
+            self.lr_scheduler = None
+            if lr_scheduler is not None:
+                self.lr_scheduler = lr_scheduler(self.optimizer, **lr_scheduler_params)
+
         self.compute_session = Compute(model = self.model, optimizer = self.optimizer, 
                                         criterion=self.criterion,
                                         input_tensors = self.input_tensors, 
@@ -224,6 +228,11 @@ class Node():
                     self.node_status = NodeStatus.BACKWARD
                     gradient_dict = value['data']
                     forward_pass_id = value['forward_pass_id']
+                    epoch_change = value['epoch_change']
+                    if epoch_change:
+                        if self.lr_scheduler is not None:
+                            self.lr_scheduler.step()
+
                     self.latest_backward_id = forward_pass_id
                     print('Start of backward: ', forward_pass_id)
                     pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id)
@@ -243,6 +252,7 @@ class Node():
                         sent_data = {'action':ActionTypes.BACKWARD,
                                     'forward_pass_id':forward_pass_id, 
                                     'data':gradients, 
+                                    'epoch_change':epoch_change,
                                     }
                         t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
                         send_trigger_threads.append(t)
@@ -334,15 +344,18 @@ class Node():
                 elif action == ActionTypes.FIND_LOSS:
                     self.node_status = NodeStatus.FORWARD
                     data_id = value['data_id']
-
+                    epoch_change = False
                     if isinstance(self.labels, torch.Tensor):
                         targets = self.labels[data_id:data_id+value['input_size']]
                         targets = targets.to(self.device)
                     else:
                         targets = next(self.labels_iterator, None)
                         if targets is None:
+                            epoch_change = True
                             self.labels_iterator = iter(self.labels)
                             targets = next(self.labels_iterator)
+                            if self.lr_scheduler is not None:
+                                self.lr_scheduler.step()
                             print('\n ---------------------- Reset Data Iterator ------------------------')
 
                         # print('For: ', value['forward_pass_id'])
