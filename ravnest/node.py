@@ -371,6 +371,7 @@ class Node():
                     sent_data = {'action':ActionTypes.BACKWARD, 
                                 'data':gradients, 
                                 'forward_pass_id':value['forward_pass_id'],
+                                'epoch_change':epoch_change
                                 }
                     t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
                     send_trigger_threads.append(t)
