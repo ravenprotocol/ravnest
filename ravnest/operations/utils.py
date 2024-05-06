@@ -6,6 +6,7 @@ from torch.fx import Tracer
 from pippy.IR import Pipe
 from pippy import split_into_equal_size
 
+from .pippy_utils import split_on_proportions
 from .genetic import genetic_algorithm
 from .cluster import Cluster
 from .node import Node
@@ -226,10 +227,17 @@ class CustomTracer(Tracer):
         return m.__module__.startswith('torch.nn') and not isinstance(m, torch.nn.Sequential)
 
 
-def split_model(model, n_splits=3):
-    custom_tracer = CustomTracer()
-    split_policy = split_into_equal_size(n_splits)
-    pipe = Pipe.from_tracing(model, tracer=custom_tracer, split_policy=split_policy)
+# def split_model(model, n_splits=3):
+#     custom_tracer = CustomTracer()
+#     split_policy = split_into_equal_size(n_splits)
+#     pipe = Pipe.from_tracing(model, tracer=custom_tracer, split_policy=split_policy)
+#     return pipe
+
+def split_model_on_proportions(model, proportions=[], example_args=None, example_kwargs=None):
+    traced = Pipe._trace_with_export(model, example_args=example_args, example_kwargs=example_kwargs)#torch.jit.trace(model, example_inputs=input_ids)
+    split_policy = split_on_proportions(proportions)
+    traced = split_policy(traced)
+    pipe = Pipe._from_traced(model, traced)
     return pipe
 
 def get_arg_index(name, submod_args):
@@ -239,9 +247,10 @@ def get_arg_index(name, submod_args):
     return -1
 
 
-def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths=None, model_input_node=None):
+def split_model_equal(model=None, num_splits=None, proportions=None, example_args=(), example_kwargs={}, cluster_path=None, node_paths=None, model_input_node=None):
 
-    pipe = split_model(model, num_splits)
+    # pipe = split_model(model, num_splits)
+    pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
     compiled_input_dict = {}
     compiled_output_dict = {'model_inputs':{}}
     for node in pipe.split_gm.graph.nodes:
@@ -319,7 +328,7 @@ def delete_all_folders(path):
         if os.path.isdir(folder_path):
             shutil.rmtree(folder_path)
 
-def clusterize(model=None):
+def clusterize(model=None, proportions=[], example_args = (), example_kwargs = {}):
     """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
 
     :param model: Pytorch Model, defaults to None
@@ -361,7 +370,10 @@ def clusterize(model=None):
                 current_node.backward_target_port = cluster_node_ip_addresses[i-1].split(':')[1]
 
         split_model_equal(model=model,
-                        num_splits=len(cluster.nodes), 
+                        # num_splits=len(cluster.nodes),
+                        proportions=proportions, 
+                        example_args=example_args,
+                        example_kwargs=example_kwargs,
                         cluster_path='node_data/cluster_{}'.format(cluster.cid), 
                         node_paths=cluster_node_ip_addresses,
                         model_input_node = model_input_node)

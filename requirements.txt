@@ -5,6 +5,6 @@ protobuf==4.24.4
 scikit_learn==1.1.1
 torch==2.0.0
 torchvision==0.15.1
-torchpippy==0.1.1
+torchpippy==0.2.0
 packaging
 psutil
