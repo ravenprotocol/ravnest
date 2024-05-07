@@ -8,7 +8,7 @@ from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGat
 
 class Communication():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
-                 param_address_mapping=None, reduce_lock=None, gather_lock=None,
+                 ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None,
                  forward_target_host=None, forward_target_port=None, 
                  backward_target_host=None, backward_target_port=None, 
                  output_tensors=None, input_tensors=None,
@@ -24,6 +24,7 @@ class Communication():
         self.rank = rank
         self.ring_size = ring_size
         self.ring_param_keys = ring_param_keys
+        self.ring_ids = ring_ids
         self.param_address_mapping = param_address_mapping
 
         self.reduce_lock = reduce_lock
@@ -118,6 +119,7 @@ class Communication():
             load_model_weights_into_optim(self.model, self.optimizer)
             self.average_no += 1 
             print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
+            # print('Averaged state_dict: ', self.model.state_dict())
 
     def single_ring_reduce(self, ring_data, ring_id):
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)

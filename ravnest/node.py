@@ -156,6 +156,7 @@ class Node():
                                           rank=self.rank,
                                           ring_size=self.ring_size,
                                           ring_param_keys=self.ring_param_keys,
+                                          ring_ids = self.ring_ids,
                                           param_address_mapping=self.param_address_mapping, 
                                           reduce_lock=self.reduce_lock, 
                                           gather_lock=self.gather_lock,
@@ -264,8 +265,8 @@ class Node():
                     print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
                     self.n_backwards += 1
 
-                    # if self.n_backwards % self.reduce_threshold == 0:
-                    #     self.comm_session.parallel_ring_reduce()
+                    if self.n_backwards % self.reduce_threshold == 0:
+                        self.comm_session.parallel_ring_reduce()
 
                     # if self.device.type == 'cuda':
                     #     torch.cuda.synchronize()
@@ -381,8 +382,8 @@ class Node():
                     self.n_backwards += 1
                     # print('N_backwards: ', self.n_backwards)
 
-                    # if self.n_backwards % self.reduce_threshold == 0:
-                    #     self.comm_session.parallel_ring_reduce()
+                    if self.n_backwards % self.reduce_threshold == 0:
+                        self.comm_session.parallel_ring_reduce()
 
                     # if self.device.type == 'cuda':
                     #     # print('Sync')
