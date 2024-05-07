@@ -3,8 +3,8 @@ grpcio-tools==1.51.3
 numpy==1.21.5
 protobuf==4.24.4
 scikit_learn==1.1.1
-torch==2.0.0
-torchvision==0.15.1
+torch
+torchvision
 torchpippy==0.2.0
 packaging
 psutil
