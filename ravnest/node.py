@@ -21,8 +21,8 @@ from .protos.server_pb2_grpc import add_CommServerServicer_to_server
 mp = multiprocessing.get_context('spawn')
 
 class Node():
-    def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, criterion=None, 
-                 labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
+    def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
+                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -107,6 +107,7 @@ class Node():
         self.n_forwards = 0
         self.forward_pass_id = 0
         self.latest_backward_id = 0
+        self.update_frequency = update_frequency
 
         self.reduce_threshold = 8
 
@@ -118,6 +119,8 @@ class Node():
         self.average_no = 0
 
         self.cluster_length = kwargs['cluster_length']
+
+        self.lr_step_on_epoch_change = lr_step_on_epoch_change
 
         if kwargs.get('submod_file', None) is not None:
             with open('{}{}_input.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
@@ -230,14 +233,23 @@ class Node():
                     gradient_dict = value['data']
                     forward_pass_id = value['forward_pass_id']
                     epoch_change = value['epoch_change']
-                    if epoch_change:
+                    if epoch_change and self.lr_step_on_epoch_change:
                         if self.lr_scheduler is not None:
                             self.lr_scheduler.step()
 
                     self.latest_backward_id = forward_pass_id
                     print('Start of backward: ', forward_pass_id)
-                    pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id)
+
+                    update_flag = False
+                    if (self.n_backwards + 1) % self.update_frequency == 0:
+                        update_flag = True
+
+                    pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id, update_flag=update_flag)
                     
+                    if update_flag and not self.lr_step_on_epoch_change:
+                        if self.lr_scheduler is not None:
+                            self.lr_scheduler.step()
+
                     if self.node_type != NodeTypes.ROOT:
                         gradients = self.comm_session.create_backward_payload(forward_pass_id=forward_pass_id)
                         for pass_key in pass_grad_keys:
@@ -288,14 +300,18 @@ class Node():
                 if action == ActionTypes.ROOT_FORWARD:
                     data_id = value['data_id']
                     tensors = value['data']
+                    kwargs = value['kwargs']
 
                     tensors = tensors.to(self.device)
+                    for kwarg_key, kwarg_val in kwargs.items():
+                        if isinstance(kwarg_val, torch.Tensor):
+                            kwargs[kwarg_key] = kwarg_val.to(self.device)
 
                     self.node_status = NodeStatus.FORWARD
 
                     print('Before Root Forward: ')
                     check_gpu_usage()
-                    output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id)
+                    output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **kwargs)
                     print('After Root Forward: ')
                     check_gpu_usage()
 
@@ -352,21 +368,31 @@ class Node():
                     else:
                         targets = next(self.labels_iterator, None)
                         if targets is None:
-                            epoch_change = True
+                            epoch_change = self.lr_step_on_epoch_change
                             self.labels_iterator = iter(self.labels)
                             targets = next(self.labels_iterator)
-                            if self.lr_scheduler is not None:
-                                self.lr_scheduler.step()
+                            if epoch_change:
+                                if self.lr_scheduler is not None:
+                                    self.lr_scheduler.step()
                             print('\n ---------------------- Reset Data Iterator ------------------------')
 
                         # print('For: ', value['forward_pass_id'])
                         # print('X_train: ', targets[0][0][0])
                         # print('y_train: ', targets[1])
 
-                        targets = targets[1].to(self.device)
+                        # targets = targets[1].to(self.device)
+                        targets = targets.to(self.device)
+
+                    update_flag = False
+                    if (self.n_backwards + 1) % self.update_frequency == 0:
+                        update_flag = True
                     
                     data = value['data']
-                    model_args = self.compute_session.leaf_find_loss(data, targets=targets)
+                    model_args = self.compute_session.leaf_find_loss(data, targets=targets, update_flag=update_flag)
+                    if update_flag and not self.lr_step_on_epoch_change:
+                        if self.lr_scheduler is not None:
+                            self.lr_scheduler.step()
+                    
                     gradients = self.comm_session.create_backward_payload(model_args=model_args)
 
                     sent_data = {'action':ActionTypes.BACKWARD, 
@@ -485,8 +511,8 @@ class Node():
             self.node_status = NodeStatus.IDLE
                         
 
-    def forward_compute(self, data_id=None, tensors=None):
-        data = {'data':tensors, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
+    def forward_compute(self, data_id=None, tensors=None, **kwargs):
+        data = {'data':tensors, 'kwargs':kwargs, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
 
 
         while self.forward_pass_id - self.latest_backward_id > self.cluster_length:

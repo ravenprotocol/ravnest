@@ -1,4 +1,5 @@
 import torch
+import setuptools
 import pickle
 from pip._internal.operations.freeze import freeze
 

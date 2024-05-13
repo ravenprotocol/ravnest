@@ -31,10 +31,11 @@ class Compute():
         self.node_type = node_type
         self.device = device
         self.recompute_thread = None
+        self.file_loss = 0
         # self.recompute_stream = torch.cuda.Stream(self.device)
         self.version_to_param[self.current_version] = self.get_params_clone()
 
-    def root_forward_compute(self, tensors, forward_pass_id):
+    def root_forward_compute(self, tensors, forward_pass_id, **kwargs):
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
@@ -51,10 +52,13 @@ class Compute():
         
         self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
 
-        self.input_tensors[forward_pass_id] = tensors
+        if len(kwargs) > 0:
+            self.input_tensors[forward_pass_id] = {'tensors': tensors, 'kwargs':kwargs}
+        else:
+            self.input_tensors[forward_pass_id] = tensors
 
         with torch.no_grad():
-            output = self.model(tensors)
+            output = self.model(tensors, **kwargs)
 
         if self.version_to_fpid.get(self.current_version, None) is not None:
             self.version_to_fpid[self.current_version].append(forward_pass_id)
@@ -97,8 +101,16 @@ class Compute():
 
         return output
 
-    def middle_backward_compute(self, gradient_dict, forward_pass_id):
+    def num_grad_enabled_output_tensors(self):
+        num_grad_enabled = 0
+        for k, v in self.output_tensors.items():
+            if v.grad_fn is not None:
+                num_grad_enabled += 1
+        return num_grad_enabled
+
+    def middle_backward_compute(self, gradient_dict, forward_pass_id, update_flag=False):
         # self.recompute_forward(forward_pass_id)
+        # print('Gradient dict: ', gradient_dict)
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
@@ -109,43 +121,54 @@ class Compute():
             print('Blocking recompute for: ', forward_pass_id)
             self.recompute_forward(forward_pass_id)
 
-        self.model.zero_grad()
-        self.optimizer.zero_grad()
+        # self.model.zero_grad()
+        # self.optimizer.zero_grad()
+        print('Before Backward: ')
+        check_gpu_usage()
+
         pass_grad_keys = []
         # print('Gradient dict: ', gradient_dict.keys())
         for key, value in gradient_dict.items():
             if self.output_tensors.get(key, None) is not None:
-                if isinstance(value, list):
-                    for val in value:
-                        if val.device.type != self.device:
-                            val = val.to(self.device)
+                if self.output_tensors[key].grad_fn is not None:
+                    if isinstance(value, list):
+                        for val in value:
+                            if val.device.type != self.device:
+                                val = val.to(self.device)
+
+                            output_tensor = self.output_tensors[key]
+                            # if len(self.output_tensors) > 1 or len(value) > 1:
+                            if self.num_grad_enabled_output_tensors() > 1 or len(value) > 1:
+                                output_tensor.backward(val, retain_graph=True)
+                            else:
+                                output_tensor.backward(val)
+
+                        del self.output_tensors[key]
+
+                    else:
+                        if value.device.type != self.device:
+                            value = value.to(self.device)
 
                         output_tensor = self.output_tensors[key]
-                        if len(self.output_tensors) > 1 or len(value) > 1:
-                            output_tensor.backward(val, retain_graph=True)
+                        
+                        # if len(self.output_tensors) > 1:
+                        if self.num_grad_enabled_output_tensors() > 1:
+                            output_tensor.backward(value, retain_graph=True)
                         else:
-                            output_tensor.backward(val)
+                            output_tensor.backward(value)
 
-                    del self.output_tensors[key]
-
+                        del self.output_tensors[key]
                 else:
-                    if value.device.type != self.device:
-                        value = value.to(self.device)
-
-                    output_tensor = self.output_tensors[key]
-                    
-                    if len(self.output_tensors) > 1:
-                        output_tensor.backward(value, retain_graph=True)
-                    else:
-                        output_tensor.backward(value)
-
                     del self.output_tensors[key]
             else:
                 pass_grad_keys.append(key)
 
-        load_grads_into_optimizer(self.model, self.optimizer)
-        self.optimizer.step()
-        load_optim_weights_into_model(self.model, self.optimizer)
+        if update_flag:
+            load_grads_into_optimizer(self.model, self.optimizer)
+            self.optimizer.step()
+            load_optim_weights_into_model(self.model, self.optimizer)
+            self.model.zero_grad()
+            self.optimizer.zero_grad()
 
         if self.version_to_fpid.get(self.current_version, None) is None:
             if self.current_version in self.version_to_param:
@@ -155,6 +178,9 @@ class Compute():
         self.version_to_param[self.current_version] = self.get_params_clone()
         print('Len of dictionaries: ', len(self.fpid_to_version), len(self.version_to_fpid), len(self.version_to_param), len(self.output_tensors))
         
+        print('After Backward: ')
+        check_gpu_usage()
+
         if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
             self.recompute_thread = threading.Thread(target=self.recompute_forward, args=(forward_pass_id+1,))
             self.recompute_thread.start()
@@ -166,6 +192,9 @@ class Compute():
         return pass_grad_keys
 
     def recompute_forward(self, forward_pass_id):
+        print('Before Recompute: ')
+        check_gpu_usage()
+
         recompute_version = self.fpid_to_version[forward_pass_id]
         del self.fpid_to_version[forward_pass_id]
 
@@ -188,16 +217,21 @@ class Compute():
                 torch.cuda.set_rng_state(gpu_rng, self.device)
 
             if self.node_type == NodeTypes.ROOT:
-                output = self.model(self.input_tensors[forward_pass_id])
+                if isinstance(self.input_tensors[forward_pass_id], dict):
+                    output = self.model(self.input_tensors[forward_pass_id]['tensors'], **self.input_tensors[forward_pass_id]['kwargs'])
+                else:
+                    output = self.model(self.input_tensors[forward_pass_id])
             else:
                 output = self.model(*self.get_model_args(forward_pass_id))
+
+            # print('Inputs in recompute: ', self.input_tensors[forward_pass_id])
 
         for k, v in self.output_template.items():
             if isinstance(output, tuple):
                 out = output[k]
             else:
                 out = output
-            # print('Recompute tensor_id: ', self.tensor_id)
+            
             self.output_tensors[self.tensor_id] = out
             self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
 
@@ -210,7 +244,10 @@ class Compute():
             del self.version_to_fpid[recompute_version]
         print('Recompute done for: ', forward_pass_id)
 
-    def leaf_find_loss(self, data, targets):
+        print('After Recompute: ')
+        check_gpu_usage()
+
+    def leaf_find_loss(self, data, targets, update_flag=False):
         model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
         
         if not self.model.training:
@@ -223,18 +260,30 @@ class Compute():
         print('Before backward GPU: ')
         check_gpu_usage()
         
-        self.model.zero_grad()
-        self.optimizer.zero_grad()
+        # self.model.zero_grad()
+        # self.optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
+
+        self.file_loss += loss.item()
+
+        if update_flag:
+            self.optimizer.step()
+            self.model.zero_grad()
+            self.optimizer.zero_grad()
+
+            print('Loss: ', round(self.file_loss, 4))
+            f = open("losses.txt", "a")
+            f.write(str(round(self.file_loss, 4)) + '\n')
+            f.close()
+            self.file_loss = 0
 
         print('After backward GPU: ')
         check_gpu_usage()
 
-        print('Loss: ', round(loss.item(), 4))
-        f = open("losses.txt", "a")
-        f.write(str(round(loss.item(), 4)) + '\n')
-        f.close()
+        # print('Loss: ', round(loss.item(), 4))
+        # f = open("losses.txt", "a")
+        # f.write(str(round(loss.item(), 4)) + '\n')
+        # f.close()
 
         return model_args
 
@@ -270,13 +319,18 @@ class Compute():
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
 
-                            if data[k][arg_pos]['data'].device.type != self.device:
-                                data[k][arg_pos]['data'] = data[k][arg_pos]['data'].detach().clone().to(self.device)
-                                data[k][arg_pos]['data'].requires_grad_()
+                            # if data[k][arg_pos]['data'].device.type != self.device:
+                            #     data[k][arg_pos]['data'] = data[k][arg_pos]['data'].detach().clone().to(self.device)
+                            #     data[k][arg_pos]['data'].requires_grad_()
 
-                            model_args.append(data[k][arg_pos]['data'])
+                            model_arg = data[k][arg_pos]['data'].detach().clone()
+                            if model_arg.device.type != self.device:
+                                model_arg = model_arg.to(self.device)
+                            
+                            model_arg.requires_grad_()
+                            model_args.append(model_arg)
                             # if node_type != NodeTypes.LEAF:
-                            self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
+                            self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][arg_pos]['data']
 
                             data[k][arg_pos]['target'].remove(self.submod_file)
 
@@ -291,14 +345,19 @@ class Compute():
                         if 'submod' in k or 'model_inputs' in k:                                    
                             if isinstance(v, int):    
                                 
-                                if data[k][v]['data'].device.type != self.device:
-                                    data[k][v]['data'] = data[k][v]['data'].detach().clone().to(self.device)
-                                    data[k][v]['data'].requires_grad_()
+                                # if data[k][v]['data'].device.type != self.device:
+                                #     data[k][v]['data'] = data[k][v]['data'].detach().clone().to(self.device)
+                                #     data[k][v]['data'].requires_grad_()
 
-                                model_args.append(data[k][v]['data'])
+                                model_arg = data[k][v]['data'].detach().clone()
+                                if model_arg.device.type != self.device:
+                                    model_arg = model_arg.to(self.device)
+                                
+                                model_arg.requires_grad_()
+                                model_args.append(model_arg)
                                 # if node_type != NodeTypes.LEAF:
                                 # if k != 'model_inputs':
-                                self.input_tensors[forward_pass_id][tensor_id] = data[k][v]['data']                                 
+                                self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][v]['data']                                 
                             
                         data[k][v]['target'].remove(self.submod_file)
 
@@ -320,13 +379,18 @@ class Compute():
                         if self.submod_file in data[k][arg_pos]['target']:
                             tensor_id = data[k][arg_pos]['tensor_id']
 
-                            if data[k][arg_pos]['data'].device.type != self.device:
-                                data[k][arg_pos]['data'] = data[k][arg_pos]['data'].detach().clone().to(self.device)    
-                                data[k][arg_pos]['data'].requires_grad_()                     
+                            # if data[k][arg_pos]['data'].device.type != self.device:
+                            #     data[k][arg_pos]['data'] = data[k][arg_pos]['data'].detach().clone().to(self.device)    
+                            #     data[k][arg_pos]['data'].requires_grad_() 
 
-                            model_args[tensor_id] = data[k][arg_pos]['data']
+                            model_arg = data[k][arg_pos]['data'].detach().clone()
+                            if model_arg.device.type != self.device:
+                                model_arg = model_arg.to(self.device)    
+                            
+                            model_arg.requires_grad_()                     
+                            model_args[tensor_id] = model_arg #data[k][arg_pos]['data']
                             if node_type != NodeTypes.LEAF:
-                                self.input_tensors[forward_pass_id][tensor_id] = data[k][arg_pos]['data']
+                                self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][arg_pos]['data']
 
                             data[k][arg_pos]['target'].remove(self.submod_file)
 
@@ -340,10 +404,16 @@ class Compute():
                         tensor_id = data[k][v]['tensor_id']
                         if 'submod' in k or 'model_inputs' in k:                                    
                             if isinstance(v, int):
-                                if data[k][v]['data'].device.type != self.device:
-                                    data[k][v]['data'] = data[k][v]['data'].detach().clone().to(self.device) 
-                                    data[k][v]['data'].requires_grad_()                            
-                                model_args[tensor_id] = data[k][v]['data']    
+                                # if data[k][v]['data'].device.type != self.device:
+                                #     data[k][v]['data'] = data[k][v]['data'].detach().clone().to(self.device) 
+                                #     data[k][v]['data'].requires_grad_()  
+
+                                model_arg = data[k][v]['data'].detach().clone()
+                                if model_arg.device.type != self.device:
+                                    model_arg = model_arg.to(self.device) 
+
+                                model_arg.requires_grad_()                            
+                                model_args[tensor_id] = model_arg #data[k][v]['data']    
                             
                         data[k][v]['target'].remove(self.submod_file)
 
