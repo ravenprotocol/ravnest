@@ -1,6 +1,7 @@
 import grpc
 from threading import Thread
 import psutil
+import torch
 from .utils import *
 from .strings import *
 from .protos.server_pb2_grpc import CommServerStub
@@ -8,8 +9,8 @@ from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGat
 
 class Communication():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
-                 ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None,
-                 forward_target_host=None, forward_target_port=None, 
+                 ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None, device = torch.device('cpu'),
+                 forward_target_host=None, forward_target_port=None,
                  backward_target_host=None, backward_target_port=None, 
                  output_tensors=None, input_tensors=None,
                  reduce_ring_buffers=None, gather_ring_buffers=None,
@@ -29,6 +30,8 @@ class Communication():
 
         self.reduce_lock = reduce_lock
         self.gather_lock = gather_lock
+
+        self.device = device
 
         self.input_tensors = input_tensors
         self.output_tensors = output_tensors
@@ -121,6 +124,7 @@ class Communication():
             print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
             # print('Averaged state_dict: ', self.model.state_dict())
 
+    @torch.no_grad()
     def single_ring_reduce(self, ring_data, ring_id):
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
         iterations = self.ring_size - 1
@@ -128,6 +132,8 @@ class Communication():
         send_pos = (self.rank)%self.ring_size
 
         for i in range(iterations):
+            print('Send pos: ', send_pos)
+            print(' RIng size: ', self.ring_size)
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
@@ -203,7 +209,7 @@ class Communication():
         self.gather_iteration[ring_id] = 0
 
         for param, chunk in chunked_data.items():
-            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size)
+            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size).to(self.device)
 
         print('Gathered Ring id: ', ring_id)
         self.averaged_params_buffer.update(chunked_data)

@@ -22,7 +22,7 @@ mp = multiprocessing.get_context('spawn')
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
-                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), **kwargs):
+                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -31,6 +31,7 @@ class Node():
 
         self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
         self.name = name
+        self.loss_filename = loss_filename
 
         self.reset()
 
@@ -58,6 +59,7 @@ class Node():
             print('ring ids: ', self.ring_ids)
 
         self.rank = kwargs.get('rank', None)
+        print('\n Rank: ', self.rank)
         self.ring_size = kwargs.get('ring_size', None)
         
         self.ring_param_keys = {}
@@ -80,6 +82,10 @@ class Node():
             
             for param_name in keys:
                 self.param_address_mapping[param_name] = address_to_param[0]
+
+        print('Ring param keys: ', self.ring_param_keys)
+        print('Param address mapping: ', self.param_address_mapping)
+        print('State dict: ', self.model.state_dict().keys())
 
         self.criterion = criterion
 
@@ -109,7 +115,7 @@ class Node():
         self.latest_backward_id = 0
         self.update_frequency = update_frequency
 
-        self.reduce_threshold = 8
+        self.reduce_threshold = self.update_frequency * 16
 
         self.submod_file = kwargs.get('submod_file', None)
         self.node_status = NodeStatus.IDLE
@@ -150,7 +156,7 @@ class Node():
                                         input_tensors = self.input_tensors, 
                                         tensor_id = self.tensor_id, output_template = self.output_template, 
                                         input_template = self.input_template, node_type=self.node_type,
-                                        submod_file=self.submod_file, device = self.device)
+                                        submod_file=self.submod_file, loss_filename=self.loss_filename, device = self.device)
 
         self.comm_session = Communication(name=self.name,
                                           model=self.model,
@@ -163,6 +169,7 @@ class Node():
                                           param_address_mapping=self.param_address_mapping, 
                                           reduce_lock=self.reduce_lock, 
                                           gather_lock=self.gather_lock,
+                                          device=self.device,
                                           forward_target_host=self.forward_target_host, 
                                           forward_target_port=self.forward_target_port, 
                                           backward_target_host=self.backward_target_host, 
@@ -278,7 +285,13 @@ class Node():
                     self.n_backwards += 1
 
                     if self.n_backwards % self.reduce_threshold == 0:
+                        print('\nPre AVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+
                         self.comm_session.parallel_ring_reduce()
+                        # self.compute_session.current_version += 1
+                        self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
+
+                        print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
 
                     # if self.device.type == 'cuda':
                     #     torch.cuda.synchronize()
@@ -409,7 +422,10 @@ class Node():
                     # print('N_backwards: ', self.n_backwards)
 
                     if self.n_backwards % self.reduce_threshold == 0:
+                        print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
+
                         self.comm_session.parallel_ring_reduce()
+                        print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
 
                     # if self.device.type == 'cuda':
                     #     # print('Sync')
@@ -563,8 +579,8 @@ class Node():
         if os.path.exists('{}_aux'.format(self.name)):
             shutil.rmtree('{}_aux'.format(self.name))
         os.makedirs('{}_aux'.format(self.name), exist_ok=True)
-        if os.path.exists('losses.txt'):
-            os.remove('losses.txt')
+        if os.path.exists(self.loss_filename):
+            os.remove(self.loss_filename)
         if os.path.exists('val_accuracies.txt'):
             os.remove('val_accuracies.txt')
 

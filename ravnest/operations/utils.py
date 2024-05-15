@@ -415,7 +415,9 @@ def clusterize(model=None, proportions=[], example_args = (), example_kwargs = {
             for key in node.ring_ids:
                 max_ring_size[key] = max_ring_size.get(key, 0) + 1
         
-    max_ring_size_value = max(max_ring_size.values())
+    # max_ring_size_value = max(max_ring_size.values())
+    max_ring_size_value = len(cluster_pool)
+    print('Max ring size: ', max_ring_size)
 
     for cl in range(len(cluster_pool)):
         cluster = cluster_pool[cl]

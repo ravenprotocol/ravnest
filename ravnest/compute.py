@@ -13,7 +13,7 @@ class Compute():
                 input_tensors = None, tensor_id = None, 
                 output_template = None, input_template = None,
                 node_type=None,
-                submod_file = None, device = None):
+                submod_file = None, loss_filename = None, device = None):
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
@@ -24,6 +24,7 @@ class Compute():
         self.version_to_param = {}
         self.fpid_to_rng = {}
         self.submod_file = submod_file
+        self.loss_filename = loss_filename
         self.output_tensors = {}
         self.tensor_id = tensor_id
         self.output_template = output_template
@@ -170,6 +171,9 @@ class Compute():
             self.model.zero_grad()
             self.optimizer.zero_grad()
 
+            print('\nUpdated params: ', self.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+
+
         if self.version_to_fpid.get(self.current_version, None) is None:
             if self.current_version in self.version_to_param:
                 del self.version_to_param[self.current_version]
@@ -272,7 +276,7 @@ class Compute():
             self.optimizer.zero_grad()
 
             print('Loss: ', round(self.file_loss, 4))
-            f = open("losses.txt", "a")
+            f = open(self.loss_filename, "a")
             f.write(str(round(self.file_loss, 4)) + '\n')
             f.close()
             self.file_loss = 0
