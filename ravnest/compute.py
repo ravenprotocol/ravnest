@@ -171,7 +171,7 @@ class Compute():
             self.model.zero_grad()
             self.optimizer.zero_grad()
 
-            print('\nUpdated params: ', self.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+            
 
 
         if self.version_to_fpid.get(self.current_version, None) is None:
