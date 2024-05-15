@@ -8,3 +8,4 @@ torchvision
 torchpippy==0.2.0
 packaging
 psutil
+nvidia-ml-py3
