@@ -124,7 +124,7 @@ def create_chunks(data, size):
     for key, val in data.items():
         split_axis = np.argmax(val.shape)
         chunked_data[key] = {}
-        chunked_data[key]['data'] = list(torch.chunk(val.to(torch.device('cpu')), chunks=size, dim=split_axis))
+        chunked_data[key]['data'] = list(torch.tensor_split(val.to(torch.device('cpu')), size, split_axis))
         chunked_data[key]['split_axis'] = split_axis
 
     return chunked_data
