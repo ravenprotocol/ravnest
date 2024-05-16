@@ -329,7 +329,7 @@ def delete_all_folders(path):
         if os.path.isdir(folder_path):
             shutil.rmtree(folder_path)
 
-def clusterize(model=None, proportions=[], example_args = (), example_kwargs = {}):
+def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportions=[],
     """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
 
     :param model: Pytorch Model, defaults to None
@@ -355,9 +355,12 @@ def clusterize(model=None, proportions=[], example_args = (), example_kwargs = {
     for cluster in cluster_pool:
         model_input_node = cluster.nodes[list(cluster.nodes.keys())[0]].address
         cluster_node_ip_addresses = []
+        cluster_proportions = []
+
         for node_id, metadata in cluster.nodes.items():
             cluster_node_ip_addresses.append(metadata.address)
-        
+            cluster_proportions.append(1/len(cluster.nodes)) #metadata.benchmarks['ram'] / cluster.total_ram)
+
         for i in range(len(cluster_node_ip_addresses)):
             for node in node_pool:
                 if node.address == cluster_node_ip_addresses[i]:
@@ -372,7 +375,7 @@ def clusterize(model=None, proportions=[], example_args = (), example_kwargs = {
 
         split_model_equal(model=model,
                         # num_splits=len(cluster.nodes),
-                        proportions=proportions, 
+                        proportions=cluster_proportions,#proportions, 
                         example_args=example_args,
                         example_kwargs=example_kwargs,
                         cluster_path='node_data/cluster_{}'.format(cluster.cid), 
