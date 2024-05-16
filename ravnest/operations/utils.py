@@ -359,8 +359,13 @@ def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportion
 
         for node_id, metadata in cluster.nodes.items():
             cluster_node_ip_addresses.append(metadata.address)
-            cluster_proportions.append(1/len(cluster.nodes)) #metadata.benchmarks['ram'] / cluster.total_ram)
-
+            if len(cluster_proportions) == len(cluster.nodes) - 1:
+                cluster_proportions.append(1 - sum(cluster_proportions))
+            else:
+                cluster_proportions.append(round(1/len(cluster.nodes), 1)) #metadata.benchmarks['ram'] / cluster.total_ram)
+        
+        print('cluster props: ', cluster_proportions)
+        
         for i in range(len(cluster_node_ip_addresses)):
             for node in node_pool:
                 if node.address == cluster_node_ip_addresses[i]:
