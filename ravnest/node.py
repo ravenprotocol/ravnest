@@ -83,9 +83,9 @@ class Node():
             for param_name in keys:
                 self.param_address_mapping[param_name] = address_to_param[0]
 
-        print('Ring param keys: ', self.ring_param_keys)
-        print('Param address mapping: ', self.param_address_mapping)
-        print('State dict: ', self.model.state_dict().keys())
+        print('Ring param keys: ', self.ring_param_keys.keys())
+        # print('Param address mapping: ', self.param_address_mapping)
+        # print('State dict: ', self.model.state_dict().keys())
 
         self.criterion = criterion
 
@@ -115,7 +115,7 @@ class Node():
         self.latest_backward_id = 0
         self.update_frequency = update_frequency
 
-        self.reduce_threshold = self.update_frequency * 16
+        self.reduce_threshold = self.update_frequency * 3
 
         self.submod_file = kwargs.get('submod_file', None)
         self.node_status = NodeStatus.IDLE
@@ -310,7 +310,7 @@ class Node():
                 if action == ActionTypes.NO_GRAD_FORWARD and self.node_type == NodeTypes.LEAF:
                     action = ActionTypes.VAL_ACCURACY
 
-                if action == ActionTypes.ROOT_FORWARD:
+                if action == ActionTypes.ROOT_FORWARD:                    
                     data_id = value['data_id']
                     tensors = value['data']
                     kwargs = value['kwargs']
@@ -348,6 +348,7 @@ class Node():
                     self.node_status = NodeStatus.IDLE
                 
                 elif action == ActionTypes.FORWARD:
+                    print('n_backwards in FORWARD: ', self.n_backwards)
                     self.node_status = NodeStatus.FORWARD
                     data = value['data']
                     forward_pass_id = value['forward_pass_id']
@@ -534,6 +535,9 @@ class Node():
         while self.forward_pass_id - self.latest_backward_id > self.cluster_length:
             time.sleep(0)
         
+        if self.n_forwards % self.reduce_threshold == 0:
+            self.wait_for_backwards()
+
         self.forward_lock.acquire(block=True)
         self.load_forward_buffer.append(data)
         self.forward_lock.release()
