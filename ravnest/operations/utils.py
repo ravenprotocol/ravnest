@@ -247,11 +247,31 @@ def get_arg_index(name, submod_args):
             return i
     return -1
 
+def remake_proportions(proportions):
+    ind = proportions.index(max(proportions))
+    if ind == len(proportions) - 1:
+        proportions[0] += 0.1
+    else:
+        proportions[ind + 1] += 0.1
+    proportions[ind] -= 0.1
+    return proportions
 
 def split_model_equal(model=None, num_splits=None, proportions=None, example_args=(), example_kwargs={}, cluster_path=None, node_paths=None, model_input_node=None):
 
     # pipe = split_model(model, num_splits)
     pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
+    
+    print('Testing pipe: ')
+
+    try:
+        op = pipe.forward(*example_args, **example_kwargs)
+        print('op: ', op)
+    except Exception as e:
+        proportions = remake_proportions(proportions)
+        print('Remade proportions: ', proportions)
+        pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
+    
+    print('Testing finished')
     compiled_input_dict = {}
     compiled_output_dict = {'model_inputs':{}}
     for node in pipe.split_gm.graph.nodes:
