@@ -91,7 +91,10 @@ class Communication():
                 out = output[k]
             else:
                 out = output
-            payload[k]['data'] = out.to(torch.device('cpu'))
+            
+            payload[k]['requires_grad'] = out.requires_grad
+            # payload[k]['data'] = out.to(torch.device('cpu'))
+            payload[k]['data'] = out.detach().clone().to(torch.device('cpu'))
             payload[k]['tensor_id'] = self.tensor_id
             # if self.node_type != NodeTypes.ROOT:
             #     self.output_tensors[self.tensor_id] = out

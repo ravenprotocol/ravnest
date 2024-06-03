@@ -129,40 +129,57 @@ class Compute():
 
         pass_grad_keys = []
         # print('Gradient dict: ', gradient_dict.keys())
+        leaf_output_tensors = []
+        backward_grads = []
         for key, value in gradient_dict.items():
             if self.output_tensors.get(key, None) is not None:
                 if self.output_tensors[key].grad_fn is not None:
-                    if isinstance(value, list):
-                        for val in value:
-                            if val.device.type != self.device:
-                                val = val.to(self.device)
+                    # if isinstance(value, list):
+                    #     for val in value:
+                    #         if val.device.type != self.device:
+                    #             val = val.to(self.device)
 
-                            output_tensor = self.output_tensors[key]
-                            # if len(self.output_tensors) > 1 or len(value) > 1:
-                            if self.num_grad_enabled_output_tensors() > 1 or len(value) > 1:
-                                output_tensor.backward(val, retain_graph=True)
-                            else:
-                                output_tensor.backward(val)
+                    #         output_tensor = self.output_tensors[key]
+                    #         # if len(self.output_tensors) > 1 or len(value) > 1:
+                    #         if self.num_grad_enabled_output_tensors() > 1 or len(value) > 1:
+                    #             output_tensor.backward(val, retain_graph=True)
+                    #         else:
+                    #             output_tensor.backward(val)
 
-                        del self.output_tensors[key]
+                    #     del self.output_tensors[key]
 
-                    else:
-                        if value.device.type != self.device:
-                            value = value.to(self.device)
+                    # else:
+                    #     if value.device.type != self.device:
+                    #         value = value.to(self.device)
 
-                        output_tensor = self.output_tensors[key]
+                    #     output_tensor = self.output_tensors[key]
                         
-                        # if len(self.output_tensors) > 1:
-                        if self.num_grad_enabled_output_tensors() > 1:
-                            output_tensor.backward(value, retain_graph=True)
-                        else:
-                            output_tensor.backward(value)
+                    #     # if len(self.output_tensors) > 1:
+                    #     if self.num_grad_enabled_output_tensors() > 1:
+                    #         output_tensor.backward(value, retain_graph=True)
+                    #     else:
+                    #         output_tensor.backward(value)
 
-                        del self.output_tensors[key]
+                    #     del self.output_tensors[key]
+                    if value.device.type != self.device:
+                        value = value.to(self.device)
+
+                    output_tensor = self.output_tensors[key]
+                    leaf_output_tensors.append(output_tensor)
+                    backward_grads.append(value)
+                    # if len(self.output_tensors) > 1:
+                    # if self.num_grad_enabled_output_tensors() > 1:
+                    #     output_tensor.backward(value, retain_graph=True)
+                    # else:
+                    #     output_tensor.backward(value)
+
+                    del self.output_tensors[key]
                 else:
                     del self.output_tensors[key]
             else:
                 pass_grad_keys.append(key)
+
+        torch.autograd.backward(leaf_output_tensors, backward_grads)
 
         if update_flag:
             load_grads_into_optimizer(self.model, self.optimizer)
@@ -170,9 +187,6 @@ class Compute():
             load_optim_weights_into_model(self.model, self.optimizer)
             self.model.zero_grad()
             self.optimizer.zero_grad()
-
-            
-
 
         if self.version_to_fpid.get(self.current_version, None) is None:
             if self.current_version in self.version_to_param:
@@ -331,7 +345,8 @@ class Compute():
                             if model_arg.device.type != self.device:
                                 model_arg = model_arg.to(self.device)
                             
-                            model_arg.requires_grad_()
+                            if data[k][arg_pos]['requires_grad']:
+                                model_arg.requires_grad_()
                             model_args.append(model_arg)
                             # if node_type != NodeTypes.LEAF:
                             self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][arg_pos]['data']
@@ -357,7 +372,8 @@ class Compute():
                                 if model_arg.device.type != self.device:
                                     model_arg = model_arg.to(self.device)
                                 
-                                model_arg.requires_grad_()
+                                if data[k][arg_pos]['requires_grad']:
+                                    model_arg.requires_grad_()
                                 model_args.append(model_arg)
                                 # if node_type != NodeTypes.LEAF:
                                 # if k != 'model_inputs':
@@ -391,7 +407,8 @@ class Compute():
                             if model_arg.device.type != self.device:
                                 model_arg = model_arg.to(self.device)    
                             
-                            model_arg.requires_grad_()                     
+                            if data[k][arg_pos]['requires_grad']:
+                                model_arg.requires_grad_()                     
                             model_args[tensor_id] = model_arg #data[k][arg_pos]['data']
                             if node_type != NodeTypes.LEAF:
                                 self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][arg_pos]['data']
@@ -415,8 +432,9 @@ class Compute():
                                 model_arg = data[k][v]['data'].detach().clone()
                                 if model_arg.device.type != self.device:
                                     model_arg = model_arg.to(self.device) 
-
-                                model_arg.requires_grad_()                            
+                            
+                                if data[k][arg_pos]['requires_grad']:
+                                    model_arg.requires_grad_()                            
                                 model_args[tensor_id] = model_arg #data[k][v]['data']    
                             
                         data[k][v]['target'].remove(self.submod_file)

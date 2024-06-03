@@ -63,7 +63,7 @@ if __name__ == '__main__':
 
     generator = torch.Generator()
     generator.manual_seed(42)
-    dataloader = DataLoader(input_s, collate_fn=data_collator, batch_size=16, generator=generator, shuffle=True, drop_last=True)
+    dataloader = DataLoader(input_s, collate_fn=data_collator, batch_size=8, generator=generator, shuffle=True, drop_last=True)
 
     if len(dataloader) % update_frequency == 0:
         num_training_steps = len(dataloader)//update_frequency  
