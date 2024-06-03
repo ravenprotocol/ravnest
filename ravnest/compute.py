@@ -345,8 +345,7 @@ class Compute():
                             if model_arg.device.type != self.device:
                                 model_arg = model_arg.to(self.device)
                             
-                            if data[k][arg_pos]['requires_grad']:
-                                model_arg.requires_grad_()
+                            model_arg.requires_grad_()
                             model_args.append(model_arg)
                             # if node_type != NodeTypes.LEAF:
                             self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][arg_pos]['data']
@@ -372,8 +371,7 @@ class Compute():
                                 if model_arg.device.type != self.device:
                                     model_arg = model_arg.to(self.device)
                                 
-                                if data[k][arg_pos]['requires_grad']:
-                                    model_arg.requires_grad_()
+                                model_arg.requires_grad_()
                                 model_args.append(model_arg)
                                 # if node_type != NodeTypes.LEAF:
                                 # if k != 'model_inputs':
@@ -407,8 +405,7 @@ class Compute():
                             if model_arg.device.type != self.device:
                                 model_arg = model_arg.to(self.device)    
                             
-                            if data[k][arg_pos]['requires_grad']:
-                                model_arg.requires_grad_()                     
+                            model_arg.requires_grad_()                     
                             model_args[tensor_id] = model_arg #data[k][arg_pos]['data']
                             if node_type != NodeTypes.LEAF:
                                 self.input_tensors[forward_pass_id][tensor_id] = model_arg #data[k][arg_pos]['data']
@@ -433,8 +430,7 @@ class Compute():
                                 if model_arg.device.type != self.device:
                                     model_arg = model_arg.to(self.device) 
                             
-                                if data[k][arg_pos]['requires_grad']:
-                                    model_arg.requires_grad_()                            
+                                model_arg.requires_grad_()                            
                                 model_args[tensor_id] = model_arg #data[k][v]['data']    
                             
                         data[k][v]['target'].remove(self.submod_file)

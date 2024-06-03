@@ -92,7 +92,6 @@ class Communication():
             else:
                 out = output
             
-            payload[k]['requires_grad'] = out.requires_grad
             # payload[k]['data'] = out.to(torch.device('cpu'))
             payload[k]['data'] = out.detach().clone().to(torch.device('cpu'))
             payload[k]['tensor_id'] = self.tensor_id
