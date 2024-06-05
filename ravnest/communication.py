@@ -10,7 +10,7 @@ from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGat
 class Communication():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
                  ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None, device = torch.device('cpu'),
-                 forward_target_host=None, forward_target_port=None,
+                 compression=False, forward_target_host=None, forward_target_port=None,
                  backward_target_host=None, backward_target_port=None, 
                  output_tensors=None, input_tensors=None,
                  reduce_ring_buffers=None, gather_ring_buffers=None,
@@ -32,6 +32,7 @@ class Communication():
         self.gather_lock = gather_lock
 
         self.device = device
+        self.compression = compression
 
         self.input_tensors = input_tensors
         self.output_tensors = output_tensors
@@ -77,11 +78,18 @@ class Communication():
         if self.node_type == NodeTypes.LEAF:
             for key, value in model_args.items():
                 if value.requires_grad:
-                    grad_payload[key] = value.grad.to(torch.device('cpu'))
+                    original_dtype = value.dtype
+                    grad_payload[key] = {'dtype': original_dtype, 'data': value.grad.detach().clone().to(torch.device('cpu'))} #value.grad.to(torch.device('cpu'))
+                    if self.compression:
+                        grad_payload[key]['data'] = compress_tensor_float16(grad_payload[key]['data'])
         else:
             for key, value in self.input_tensors[forward_pass_id].items():
                 if value.requires_grad:
-                    grad_payload[key] = value.grad.to(torch.device('cpu'))
+                    # grad_payload[key] = value.grad.to(torch.device('cpu'))
+                    original_dtype = value.dtype
+                    grad_payload[key] = {'dtype': original_dtype, 'data': value.grad.detach().clone().to(torch.device('cpu'))} #value.grad.to(torch.device('cpu'))
+                    if self.compression:
+                        grad_payload[key]['data'] = compress_tensor_float16(grad_payload[key]['data'])
         return grad_payload
 
     def create_forward_payload(self, output, tensors=None):
@@ -93,7 +101,13 @@ class Communication():
                 out = output
             
             # payload[k]['data'] = out.to(torch.device('cpu'))
+            payload[k]['dtype'] = out.dtype
+            print('Dtype in payload: ', payload[k]['dtype'])
             payload[k]['data'] = out.detach().clone().to(torch.device('cpu'))
+
+            if self.compression:
+                payload[k]['data'] = compress_tensor_float16(payload[k]['data'])
+
             payload[k]['tensor_id'] = self.tensor_id
             # if self.node_type != NodeTypes.ROOT:
             #     self.output_tensors[self.tensor_id] = out

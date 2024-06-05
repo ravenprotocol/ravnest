@@ -2,7 +2,8 @@ import os
 import json
 import torch
 import asyncio
-import nvidia_smi
+if torch.cuda.is_available():
+    import nvidia_smi
 import numpy as np
 import _pickle as cPickle
 from contextlib import contextmanager
@@ -11,6 +12,8 @@ from .protos.tensor_pb2 import TensorChunk, SendTensor
 from .protos.server_pb2 import ReduceChunk, DataChunk
 
 T = TypeVar("T")
+FP16_MIN, FP16_MAX = torch.finfo(torch.float16).min, torch.finfo(torch.float16).max
+FP32_MIN, FP32_MAX = torch.finfo(torch.float32).min, torch.finfo(torch.float32).max
 
 async def aiter_with_timeout(iterable: AsyncIterable[T], timeout: Optional[float]) -> AsyncIterator[T]:
     """Iterate over an async iterable, raise TimeoutError if another portion of data does not arrive within timeout"""
@@ -129,13 +132,26 @@ def create_chunks(data, size):
 
     return chunked_data
 
-def check_gpu_usage():
-    nvidia_smi.nvmlInit()
+def compress_tensor_float16(tensor):
+    if tensor.dtype == torch.float64:
+        tensor = tensor.clamp_(FP32_MIN, FP32_MAX).to(torch.float32)
+    elif tensor.dtype == torch.float32:
+        # tensor = tensor.to(torch.float32) #, copy=not allow_inplace)
+        tensor = tensor.clamp_(FP16_MIN, FP16_MAX).to(torch.float16)
+    return tensor
 
-    deviceCount = nvidia_smi.nvmlDeviceGetCount()
-    for i in range(deviceCount):
-        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
-        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-        print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, round(info.total * 1e-9, 2), round(info.free * 1e-9, 2), round(info.used * 1e-9, 2)))
-            
-    nvidia_smi.nvmlShutdown()
+def extract_tensor_from_compression_float16(tensor, original_dtype):
+    tensor = tensor.to(original_dtype)
+    return tensor
+
+def check_gpu_usage():
+    if torch.cuda.is_available():
+        nvidia_smi.nvmlInit()
+
+        deviceCount = nvidia_smi.nvmlDeviceGetCount()
+        for i in range(deviceCount):
+            handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
+            info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+            print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, round(info.total * 1e-9, 2), round(info.free * 1e-9, 2), round(info.used * 1e-9, 2)))
+                
+        nvidia_smi.nvmlShutdown()

@@ -22,7 +22,7 @@ mp = multiprocessing.get_context('spawn')
 
 class Node():
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
-                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', **kwargs):
+                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -37,6 +37,7 @@ class Node():
 
         self.model = model
         self.device = device
+        self.compression = compression
 
         if not next(self.model.parameters()).is_cuda:
             self.model.to(device)
@@ -152,7 +153,7 @@ class Node():
                 self.lr_scheduler = lr_scheduler(self.optimizer, **lr_scheduler_params)
 
         self.compute_session = Compute(model = self.model, optimizer = self.optimizer, 
-                                        criterion=self.criterion,
+                                        criterion=self.criterion, compression=self.compression,
                                         input_tensors = self.input_tensors, 
                                         tensor_id = self.tensor_id, output_template = self.output_template, 
                                         input_template = self.input_template, node_type=self.node_type,
@@ -170,6 +171,7 @@ class Node():
                                           reduce_lock=self.reduce_lock, 
                                           gather_lock=self.gather_lock,
                                           device=self.device,
+                                          compression=self.compression,
                                           forward_target_host=self.forward_target_host, 
                                           forward_target_port=self.forward_target_port, 
                                           backward_target_host=self.backward_target_host, 
@@ -261,11 +263,13 @@ class Node():
                         gradients = self.comm_session.create_backward_payload(forward_pass_id=forward_pass_id)
                         for pass_key in pass_grad_keys:
                             if pass_key in gradients.keys():
-                                if isinstance(gradient_dict[pass_key], list):
-                                    gradient_dict[pass_key].append(gradients[pass_key])
-                                    gradients[pass_key] = gradient_dict[pass_key]
-                                else:
-                                    gradients[pass_key] = [gradient_dict[pass_key], gradients[pass_key]]
+                                # if isinstance(gradient_dict[pass_key], list):
+                                #     gradient_dict[pass_key].append(gradients[pass_key])
+                                #     gradients[pass_key] = gradient_dict[pass_key]
+                                # else:
+                                #     gradients[pass_key] = [gradient_dict[pass_key], gradients[pass_key]]
+                                assert gradient_dict[pass_key]['dtype'] == gradients[pass_key]['dtype']
+                                gradients[pass_key] = {'dtype': gradients[pass_key]['dtype'], 'data': gradient_dict[pass_key]['data'].add_(gradients[pass_key]['data'])}
                             else:
                                 gradients[pass_key] = gradient_dict[pass_key]
 
@@ -285,13 +289,13 @@ class Node():
                     self.n_backwards += 1
 
                     if self.n_backwards % self.reduce_threshold == 0:
-                        print('\nPre AVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+                        # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
 
                         self.comm_session.parallel_ring_reduce()
                         # self.compute_session.current_version += 1
                         self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
 
-                        print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+                        # print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
 
                     # if self.device.type == 'cuda':
                     #     torch.cuda.synchronize()
@@ -423,10 +427,10 @@ class Node():
                     # print('N_backwards: ', self.n_backwards)
 
                     if self.n_backwards % self.reduce_threshold == 0:
-                        print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
+                        # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
 
                         self.comm_session.parallel_ring_reduce()
-                        print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
+                        # print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
 
                     # if self.device.type == 'cuda':
                     #     # print('Sync')

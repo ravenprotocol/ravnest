@@ -19,11 +19,13 @@ np.random.seed(42)
 
 # # For CNN Model  
 # model = CNN_Net()
+# example_args = torch.rand((64,1,8,8))
+# clusterize(model=model, example_args=(example_args,))
 
 # # For ResNET 50 Model
 # model = resnet50(num_classes=200)
 # example_args = torch.rand((16,3,64,64))
-# clusterize(model=model, example_args=(example_args,), proportions=[0.5, 0.5])
+# clusterize(model=model, example_args=(example_args,))
 
 # # For Inception V3 Model
 # model = inception_v3()
@@ -56,4 +58,4 @@ token_type_ids = test_ip['token_type_ids']
 # clusterize(model=model, example_args=(input_ids,))
 model = BertForPreTraining(config)
 clusterize(model=model, example_args=(input_ids,), 
-            example_kwargs={'attention_mask':attention_mask, 'token_type_ids':token_type_ids}) #, proportions=[0.5, 0.5])
+            example_kwargs={'attention_mask':attention_mask, 'token_type_ids':token_type_ids})

@@ -9,7 +9,7 @@ torch.jit.set_fusion_strategy([('STATIC',0), ('DYNAMIC', 0)])
 
 class Compute():
     def __init__(self, model = None, optimizer = None, 
-                criterion = None,
+                criterion = None, compression = False,
                 input_tensors = None, tensor_id = None, 
                 output_template = None, input_template = None,
                 node_type=None,
@@ -17,6 +17,7 @@ class Compute():
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
+        self.compression = compression
         self.input_tensors = input_tensors
         self.current_version = 0
         self.fpid_to_version = {}
@@ -134,44 +135,19 @@ class Compute():
         for key, value in gradient_dict.items():
             if self.output_tensors.get(key, None) is not None:
                 if self.output_tensors[key].grad_fn is not None:
-                    # if isinstance(value, list):
-                    #     for val in value:
-                    #         if val.device.type != self.device:
-                    #             val = val.to(self.device)
-
-                    #         output_tensor = self.output_tensors[key]
-                    #         # if len(self.output_tensors) > 1 or len(value) > 1:
-                    #         if self.num_grad_enabled_output_tensors() > 1 or len(value) > 1:
-                    #             output_tensor.backward(val, retain_graph=True)
-                    #         else:
-                    #             output_tensor.backward(val)
-
-                    #     del self.output_tensors[key]
-
-                    # else:
-                    #     if value.device.type != self.device:
-                    #         value = value.to(self.device)
-
-                    #     output_tensor = self.output_tensors[key]
-                        
-                    #     # if len(self.output_tensors) > 1:
-                    #     if self.num_grad_enabled_output_tensors() > 1:
-                    #         output_tensor.backward(value, retain_graph=True)
-                    #     else:
-                    #         output_tensor.backward(value)
-
-                    #     del self.output_tensors[key]
+                    original_dtype = value['dtype']
+                    value = value['data']
+                    if self.compression:
+                        # print('Extracting grad: ', value.dtype)
+                        value = extract_tensor_from_compression_float16(value, original_dtype)
+                        # print('Extracted grad to: ', value.dtype)
+                    
                     if value.device.type != self.device:
                         value = value.to(self.device)
 
                     output_tensor = self.output_tensors[key]
                     leaf_output_tensors.append(output_tensor)
                     backward_grads.append(value)
-                    # if len(self.output_tensors) > 1:
-                    # if self.num_grad_enabled_output_tensors() > 1:
-                    #     output_tensor.backward(value, retain_graph=True)
-                    # else:
-                    #     output_tensor.backward(value)
 
                     del self.output_tensors[key]
                 else:
@@ -342,6 +318,13 @@ class Compute():
                             #     data[k][arg_pos]['data'].requires_grad_()
 
                             model_arg = data[k][arg_pos]['data'].detach().clone()
+                            original_dtype = data[k][arg_pos]['dtype']
+                            # print('Dtype in create args: ', original_dtype)
+                            if self.compression:
+                                # print('Extracting')
+                                model_arg = extract_tensor_from_compression_float16(model_arg, original_dtype)
+                                # print('Dtype of model arg', model_arg.dtype)
+
                             if model_arg.device.type != self.device:
                                 model_arg = model_arg.to(self.device)
                             
@@ -368,6 +351,14 @@ class Compute():
                                 #     data[k][v]['data'].requires_grad_()
 
                                 model_arg = data[k][v]['data'].detach().clone()
+
+                                original_dtype = data[k][arg_pos]['dtype']
+                                # print('Dtype in create args: ', original_dtype)
+                                if self.compression:
+                                    # print('Extracting')
+                                    model_arg = extract_tensor_from_compression_float16(model_arg, original_dtype)
+                                    # print('Dtype of model arg', model_arg.dtype)
+
                                 if model_arg.device.type != self.device:
                                     model_arg = model_arg.to(self.device)
                                 
@@ -402,6 +393,14 @@ class Compute():
                             #     data[k][arg_pos]['data'].requires_grad_() 
 
                             model_arg = data[k][arg_pos]['data'].detach().clone()
+
+                            original_dtype = data[k][arg_pos]['dtype']
+                            # print('Dtype in create args: ', original_dtype)
+                            if self.compression:
+                                # print('Extracting')
+                                model_arg = extract_tensor_from_compression_float16(model_arg, original_dtype)
+                                # print('Dtype of model arg', model_arg.dtype)
+                            
                             if model_arg.device.type != self.device:
                                 model_arg = model_arg.to(self.device)    
                             
@@ -427,6 +426,14 @@ class Compute():
                                 #     data[k][v]['data'].requires_grad_()  
 
                                 model_arg = data[k][v]['data'].detach().clone()
+
+                                original_dtype = data[k][arg_pos]['dtype']
+                                # print('Dtype in create args: ', original_dtype)
+                                if self.compression:
+                                    # print('Extracting')
+                                    model_arg = extract_tensor_from_compression_float16(model_arg, original_dtype)
+                                    # print('Dtype of model arg', model_arg.dtype)
+                                
                                 if model_arg.device.type != self.device:
                                     model_arg = model_arg.to(self.device) 
                             

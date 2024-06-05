@@ -49,7 +49,6 @@ if __name__ == '__main__':
                 model = model, 
                 optimizer = optimizer,
                 device=torch.device('cuda'),
-                gpu_usage_limit = 0.75,
                 **node_metadata
                 )
 
