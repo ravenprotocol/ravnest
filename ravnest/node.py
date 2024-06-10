@@ -398,8 +398,8 @@ class Node():
                         # print('X_train: ', targets[0][0][0])
                         # print('y_train: ', targets[1])
 
-                        # targets = targets[1].to(self.device)
-                        targets = targets.to(self.device)
+                        targets = targets[1].to(self.device)
+                        # targets = targets.to(self.device)
 
                     update_flag = False
                     if (self.n_backwards + 1) % self.update_frequency == 0:
@@ -478,7 +478,7 @@ class Node():
                         y_test = y_test[1].to(self.device)
 
                         #for cnn
-                        # y_test = torch.argmax(y_test, dim=1)
+                        y_test = torch.argmax(y_test, dim=1)
 
                         correct_pred = (y_pred_tags == y_test).float()
                         val_acc = correct_pred.sum() / len(y_test)
