@@ -2,6 +2,7 @@ import os
 import json
 import torch
 import asyncio
+import random
 if torch.cuda.is_available():
     import nvidia_smi
 import numpy as np
@@ -143,6 +144,16 @@ def compress_tensor_float16(tensor):
 def extract_tensor_from_compression_float16(tensor, original_dtype):
     tensor = tensor.to(original_dtype)
     return tensor
+
+def set_seed(seed=42):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    # torch.manual_seed_all(42)
+    torch.random.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
 
 def check_gpu_usage():
     if torch.cuda.is_available():
