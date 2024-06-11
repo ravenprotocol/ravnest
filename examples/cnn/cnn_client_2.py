@@ -51,9 +51,9 @@ if __name__ == '__main__':
                 criterion = criterion, 
                 labels = train_loader, 
                 test_labels=val_loader,
-                device=torch.device('cpu'),
+                device=torch.device('cuda'),
                 **node_metadata
                 )
       
     while True:
-        time.sleep(1)
+        time.sleep(0)

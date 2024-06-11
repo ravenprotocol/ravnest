@@ -4,6 +4,7 @@ class NodeTypes(object):
     ROOT = "root"
 
 class ActionTypes(object):
+    ROOT_FORWARD = "root_forward"
     FORWARD = "forward"
     BACKWARD = "backward"
     FIND_LOSS = "find_loss"

@@ -2,22 +2,71 @@
     "0":{
         "IP":"0.0.0.0:8080",
         "benchmarks":{
-            "ram":128,
-            "bandwidth":20
+            "ram":100,
+            "bandwidth":10
         }
     },
     "1":{
         "IP":"0.0.0.0:8081",
         "benchmarks":{
-            "ram":128,
-            "bandwidth":20
+            "ram":100,
+            "bandwidth":10
         }
     },
     "2":{
         "IP":"0.0.0.0:8082",
         "benchmarks":{
-            "ram":64,
+            "ram":100,
+            "bandwidth":10
+        }
+    },
+    "3":{
+        "IP":"0.0.0.0:8083",
+        "benchmarks":{
+            "ram":100,
+            "bandwidth":20
+        }
+    },
+    "4":{
+        "IP":"0.0.0.0:8084",
+        "benchmarks":{
+            "ram":100,
+            "bandwidth":20
+        }
+    },
+    "5":{
+        "IP":"0.0.0.0:8085",
+        "benchmarks":{
+            "ram":100,
+            "bandwidth":20
+        }
+    },
+    "6":{
+        "IP":"0.0.0.0:8086",
+        "benchmarks":{
+            "ram":150,
             "bandwidth":40
+        }
+    },
+    "7":{
+        "IP":"0.0.0.0:8087",
+        "benchmarks":{
+            "ram":150,
+            "bandwidth":40
+        }
+    },
+    "8":{
+        "IP":"0.0.0.0:8088",
+        "benchmarks":{
+            "ram":150,
+            "bandwidth":20
+        }
+    },
+    "9":{
+        "IP":"0.0.0.0:8089",
+        "benchmarks":{
+            "ram":150,
+            "bandwidth":20
         }
     }
 }

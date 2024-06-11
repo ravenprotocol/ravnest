@@ -1,6 +1,7 @@
 import grpc
 from threading import Thread
 import psutil
+import torch
 from .utils import *
 from .strings import *
 from .protos.server_pb2_grpc import CommServerStub
@@ -8,8 +9,8 @@ from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGat
 
 class Communication():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
-                 param_address_mapping=None, reduce_lock=None, gather_lock=None,
-                 forward_target_host=None, forward_target_port=None, 
+                 ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None, device = torch.device('cpu'),
+                 compression=False, forward_target_host=None, forward_target_port=None,
                  backward_target_host=None, backward_target_port=None, 
                  output_tensors=None, input_tensors=None,
                  reduce_ring_buffers=None, gather_ring_buffers=None,
@@ -24,10 +25,14 @@ class Communication():
         self.rank = rank
         self.ring_size = ring_size
         self.ring_param_keys = ring_param_keys
+        self.ring_ids = ring_ids
         self.param_address_mapping = param_address_mapping
 
         self.reduce_lock = reduce_lock
         self.gather_lock = gather_lock
+
+        self.device = device
+        self.compression = compression
 
         self.input_tensors = input_tensors
         self.output_tensors = output_tensors
@@ -73,11 +78,18 @@ class Communication():
         if self.node_type == NodeTypes.LEAF:
             for key, value in model_args.items():
                 if value.requires_grad:
-                    grad_payload[key] = value.grad.to(torch.device('cpu'))
+                    original_dtype = value.dtype
+                    grad_payload[key] = {'dtype': original_dtype, 'data': value.grad.detach().clone().to(torch.device('cpu'))} #value.grad.to(torch.device('cpu'))
+                    if self.compression:
+                        grad_payload[key]['data'] = compress_tensor_float16(grad_payload[key]['data'])
         else:
             for key, value in self.input_tensors[forward_pass_id].items():
                 if value.requires_grad:
-                    grad_payload[key] = value.grad.to(torch.device('cpu'))
+                    # grad_payload[key] = value.grad.to(torch.device('cpu'))
+                    original_dtype = value.dtype
+                    grad_payload[key] = {'dtype': original_dtype, 'data': value.grad.detach().clone().to(torch.device('cpu'))} #value.grad.to(torch.device('cpu'))
+                    if self.compression:
+                        grad_payload[key]['data'] = compress_tensor_float16(grad_payload[key]['data'])
         return grad_payload
 
     def create_forward_payload(self, output, tensors=None):
@@ -87,13 +99,22 @@ class Communication():
                 out = output[k]
             else:
                 out = output
-            payload[k]['data'] = out.to(torch.device('cpu'))
+            
+            # payload[k]['data'] = out.to(torch.device('cpu'))
+            payload[k]['dtype'] = out.dtype
+            print('Dtype in payload: ', payload[k]['dtype'])
+            payload[k]['data'] = out.detach().clone().to(torch.device('cpu'))
+
+            if self.compression:
+                payload[k]['data'] = compress_tensor_float16(payload[k]['data'])
+
             payload[k]['tensor_id'] = self.tensor_id
-            self.output_tensors[self.tensor_id] = out
+            # if self.node_type != NodeTypes.ROOT:
+            #     self.output_tensors[self.tensor_id] = out
             self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
 
         if self.node_type == NodeTypes.ROOT:
-            payload['model_inputs'] = self.model_inputs_template
+            payload['model_inputs'] = self.model_inputs_template.copy()
             for k, v in self.model_inputs_template.items():
                 if payload['model_inputs'][k].get('target', None) is not None:
                     payload['model_inputs'][k]['data'] = tensors[k]
@@ -117,7 +138,9 @@ class Communication():
             load_model_weights_into_optim(self.model, self.optimizer)
             self.average_no += 1 
             print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
+            # print('Averaged state_dict: ', self.model.state_dict())
 
+    @torch.no_grad()
     def single_ring_reduce(self, ring_data, ring_id):
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
         iterations = self.ring_size - 1
@@ -125,6 +148,8 @@ class Communication():
         send_pos = (self.rank)%self.ring_size
 
         for i in range(iterations):
+            print('Send pos: ', send_pos)
+            print(' RIng size: ', self.ring_size)
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
@@ -200,7 +225,7 @@ class Communication():
         self.gather_iteration[ring_id] = 0
 
         for param, chunk in chunked_data.items():
-            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size)
+            chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size).to(self.device)
 
         print('Gathered Ring id: ', ring_id)
         self.averaged_params_buffer.update(chunked_data)
@@ -233,10 +258,9 @@ class Communication():
             payload[k]['data'] = out.to(torch.device('cpu'))
             
         if self.node_type == NodeTypes.ROOT:
-            payload['model_inputs'] = self.model_inputs_template
+            payload['model_inputs'] = self.model_inputs_template.copy() #Changed to copy
             for k, v in self.model_inputs_template.items():
                 if payload['model_inputs'][k].get('target', None) is not None:
                     payload['model_inputs'][k]['data'] = tensors[k]
 
         return payload
-    

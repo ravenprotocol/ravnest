@@ -2,13 +2,19 @@ import os
 import json
 import torch
 import asyncio
+import random
+if torch.cuda.is_available():
+    import nvidia_smi
 import numpy as np
 import _pickle as cPickle
+from contextlib import contextmanager
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from .protos.tensor_pb2 import TensorChunk, SendTensor
 from .protos.server_pb2 import ReduceChunk, DataChunk
 
 T = TypeVar("T")
+FP16_MIN, FP16_MAX = torch.finfo(torch.float16).min, torch.finfo(torch.float16).max
+FP32_MIN, FP32_MAX = torch.finfo(torch.float32).min, torch.finfo(torch.float32).max
 
 async def aiter_with_timeout(iterable: AsyncIterable[T], timeout: Optional[float]) -> AsyncIterator[T]:
     """Iterate over an async iterable, raise TimeoutError if another portion of data does not arrive within timeout"""
@@ -93,9 +99,11 @@ def get_trainable_param_names(model):
 
 @torch.no_grad()
 def load_state_dict_conserve_versions(model, state_dict):
-    model_state_dict = model.state_dict(keep_vars=True)
-    for k, v in state_dict.items():
-        model_state_dict[k].data = v.data
+    # model_state_dict = model.state_dict(keep_vars=True)
+    # for k, v in state_dict.items():
+    #     model_state_dict[k].data = v.data
+    for name, param in model.named_parameters():
+        param.data = state_dict[name].data
 
 def load_node_json_configs(node_name=None):
     with open('node_data/nodes/{}.json'.format(node_name)) as f:
@@ -120,7 +128,41 @@ def create_chunks(data, size):
     for key, val in data.items():
         split_axis = np.argmax(val.shape)
         chunked_data[key] = {}
-        chunked_data[key]['data'] = list(torch.chunk(val, chunks=size, dim=split_axis))
+        chunked_data[key]['data'] = list(torch.tensor_split(val.to(torch.device('cpu')), size, split_axis))
         chunked_data[key]['split_axis'] = split_axis
 
     return chunked_data
+
+def compress_tensor_float16(tensor):
+    if tensor.dtype == torch.float64:
+        tensor = tensor.clamp_(FP32_MIN, FP32_MAX).to(torch.float32)
+    elif tensor.dtype == torch.float32:
+        # tensor = tensor.to(torch.float32) #, copy=not allow_inplace)
+        tensor = tensor.clamp_(FP16_MIN, FP16_MAX).to(torch.float16)
+    return tensor
+
+def extract_tensor_from_compression_float16(tensor, original_dtype):
+    tensor = tensor.to(original_dtype)
+    return tensor
+
+def set_seed(seed=42):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    # torch.manual_seed_all(42)
+    torch.random.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+
+def check_gpu_usage():
+    if torch.cuda.is_available():
+        nvidia_smi.nvmlInit()
+
+        deviceCount = nvidia_smi.nvmlDeviceGetCount()
+        for i in range(deviceCount):
+            handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
+            info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+            print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, round(info.total * 1e-9, 2), round(info.free * 1e-9, 2), round(info.used * 1e-9, 2)))
+                
+        nvidia_smi.nvmlShutdown()

@@ -14,9 +14,9 @@ if __name__ == '__main__':
     node = Node(name = node_name, 
                 model = model, 
                 optimizer = optimizer, 
-                device=torch.device('cpu'),
+                device=torch.device('cuda'),
                 **node_metadata
                 )
 
     while True:
-        time.sleep(1)
+        time.sleep(0)

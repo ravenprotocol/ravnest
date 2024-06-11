@@ -48,7 +48,7 @@ if __name__ == '__main__':
     node = Node(name = node_name, 
                 model = model, 
                 optimizer = optimizer,
-                device=torch.device('cpu'),
+                device=torch.device('cuda'),
                 **node_metadata
                 )
 
@@ -62,4 +62,5 @@ if __name__ == '__main__':
 
     trainer.train()
 
-    trainer.pred(input=X_test)
+    # trainer.pred(input=X_test)
+    trainer.evaluate()

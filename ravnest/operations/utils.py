@@ -1,4 +1,5 @@
 import torch
+import setuptools
 import pickle
 from pip._internal.operations.freeze import freeze
 
@@ -6,6 +7,7 @@ from torch.fx import Tracer
 from pippy.IR import Pipe
 from pippy import split_into_equal_size
 
+from .pippy_utils import split_on_proportions
 from .genetic import genetic_algorithm
 from .cluster import Cluster
 from .node import Node
@@ -226,10 +228,17 @@ class CustomTracer(Tracer):
         return m.__module__.startswith('torch.nn') and not isinstance(m, torch.nn.Sequential)
 
 
-def split_model(model, n_splits=3):
-    custom_tracer = CustomTracer()
-    split_policy = split_into_equal_size(n_splits)
-    pipe = Pipe.from_tracing(model, tracer=custom_tracer, split_policy=split_policy)
+# def split_model(model, n_splits=3):
+#     custom_tracer = CustomTracer()
+#     split_policy = split_into_equal_size(n_splits)
+#     pipe = Pipe.from_tracing(model, tracer=custom_tracer, split_policy=split_policy)
+#     return pipe
+
+def split_model_on_proportions(model, proportions=[], example_args=None, example_kwargs=None):
+    traced = Pipe._trace_with_export(model, example_args=example_args, example_kwargs=example_kwargs)#torch.jit.trace(model, example_inputs=input_ids)
+    split_policy = split_on_proportions(proportions)
+    traced = split_policy(traced)
+    pipe = Pipe._from_traced(model, traced)
     return pipe
 
 def get_arg_index(name, submod_args):
@@ -238,10 +247,31 @@ def get_arg_index(name, submod_args):
             return i
     return -1
 
+def remake_proportions(proportions):
+    ind = proportions.index(max(proportions))
+    if ind == len(proportions) - 1:
+        proportions[0] += 0.1
+    else:
+        proportions[ind + 1] += 0.1
+    proportions[ind] -= 0.1
+    return proportions
 
-def split_model_equal(model=None, num_splits=None, cluster_path=None, node_paths=None, model_input_node=None):
+def split_model_equal(model=None, num_splits=None, proportions=None, example_args=(), example_kwargs={}, cluster_path=None, node_paths=None, model_input_node=None):
 
-    pipe = split_model(model, num_splits)
+    # pipe = split_model(model, num_splits)
+    pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
+    
+    print('Testing pipe: ')
+
+    try:
+        op = pipe.forward(*example_args, **example_kwargs)
+        print('op: ', op)
+    except Exception as e:
+        proportions = remake_proportions(proportions)
+        print('Remade proportions: ', proportions)
+        pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
+    
+    print('Testing finished')
     compiled_input_dict = {}
     compiled_output_dict = {'model_inputs':{}}
     for node in pipe.split_gm.graph.nodes:
@@ -319,7 +349,8 @@ def delete_all_folders(path):
         if os.path.isdir(folder_path):
             shutil.rmtree(folder_path)
 
-def clusterize(model=None):
+
+def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportions=[],
     """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
 
     :param model: Pytorch Model, defaults to None
@@ -345,8 +376,16 @@ def clusterize(model=None):
     for cluster in cluster_pool:
         model_input_node = cluster.nodes[list(cluster.nodes.keys())[0]].address
         cluster_node_ip_addresses = []
+        cluster_proportions = []
+
         for node_id, metadata in cluster.nodes.items():
             cluster_node_ip_addresses.append(metadata.address)
+            if len(cluster_proportions) == len(cluster.nodes) - 1:
+                cluster_proportions.append(1 - sum(cluster_proportions))
+            else:
+                cluster_proportions.append(round(1/len(cluster.nodes), 1)) #metadata.benchmarks['ram'] / cluster.total_ram)
+        
+        print('cluster props: ', cluster_proportions)
         
         for i in range(len(cluster_node_ip_addresses)):
             for node in node_pool:
@@ -361,7 +400,10 @@ def clusterize(model=None):
                 current_node.backward_target_port = cluster_node_ip_addresses[i-1].split(':')[1]
 
         split_model_equal(model=model,
-                        num_splits=len(cluster.nodes), 
+                        # num_splits=len(cluster.nodes),
+                        proportions=cluster_proportions,#proportions, 
+                        example_args=example_args,
+                        example_kwargs=example_kwargs,
                         cluster_path='node_data/cluster_{}'.format(cluster.cid), 
                         node_paths=cluster_node_ip_addresses,
                         model_input_node = model_input_node)
@@ -402,7 +444,9 @@ def clusterize(model=None):
             for key in node.ring_ids:
                 max_ring_size[key] = max_ring_size.get(key, 0) + 1
         
-    max_ring_size_value = max(max_ring_size.values())
+    # max_ring_size_value = max(max_ring_size.values())
+    max_ring_size_value = len(cluster_pool)
+    print('Max ring size: ', max_ring_size)
 
     for cl in range(len(cluster_pool)):
         cluster = cluster_pool[cl]
@@ -413,6 +457,9 @@ def clusterize(model=None):
 
         for nid, node in cluster.nodes.items():
             current_address = None
+
+            node.cluster_length = len(cluster.nodes)
+
             for k in node.trainable_param_keys:
                 for n_nid, n_node in next_cluster.nodes.items():
                     if k in n_node.trainable_param_keys:
@@ -430,6 +477,7 @@ def clusterize(model=None):
         node_meta['template_path'] = 'node_data/cluster_{}/{}/'.format(node.cluster_id, node.address)
         node_meta['rank'] = node.cluster_id
         node_meta['ring_size'] = max_ring_size_value
+        node_meta['cluster_length'] = node.cluster_length
         node_meta['param_addresses'] = node.address_to_param,
         node_meta['ring_ids'] = {int(key): value for key, value in node.ring_ids.items()}
         node_meta['forward_target_host'] = node.forward_target_host
