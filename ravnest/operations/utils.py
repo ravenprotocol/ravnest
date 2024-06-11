@@ -349,6 +349,7 @@ def delete_all_folders(path):
         if os.path.isdir(folder_path):
             shutil.rmtree(folder_path)
 
+
 def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportions=[],
     """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
 
@@ -456,7 +457,9 @@ def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportion
 
         for nid, node in cluster.nodes.items():
             current_address = None
+
             node.cluster_length = len(cluster.nodes)
+
             for k in node.trainable_param_keys:
                 for n_nid, n_node in next_cluster.nodes.items():
                     if k in n_node.trainable_param_keys:

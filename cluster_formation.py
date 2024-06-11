@@ -12,6 +12,7 @@ from datasets import load_from_disk
 # from examples.sorter.mingpt.model_without_padding_mask import GPT
 # from examples.sorter.dataset import SortDataset
 
+
 set_seed(42)
 
 # # For CNN Model  
@@ -35,6 +36,7 @@ clusterize(model=model, example_args=(example_args,))
 # model_config.vocab_size = train_dataset.get_vocab_size()
 # model_config.block_size = train_dataset.get_block_size()
 # model = GPT(model_config)
+
 
 # For Bert model
 # config = BertConfig()
