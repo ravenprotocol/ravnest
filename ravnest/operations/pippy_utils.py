@@ -1,5 +1,6 @@
 import torch.fx as fx
 from pippy.ModelSplit import *
+from typing import Callable, Dict, List, Tuple
 
 '''
 The following funtions have been adapted from: https://github.com/pytorch/PiPPy/blob/main/pippy/ModelSplit.py

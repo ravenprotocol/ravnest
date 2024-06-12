@@ -17,6 +17,8 @@ import json
 import os
 import shutil
 import copy
+import torchinfo
+import math
 
 def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_variants=None):
     node_pool = []
@@ -24,8 +26,11 @@ def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_vari
         file = open('node_data/node_configs.json')
         node_configs = json.load(file)
         num_nodes = len(node_configs.keys())
+        total_ram = 0
         for nid in range(num_nodes):
             # print(nid, node_configs[str(nid)]['IP'], node_configs[str(nid)]['benchmarks'])
+            node_configs[str(nid)]['benchmarks']['ram'] *= 1024
+            total_ram += node_configs[str(nid)]['benchmarks']['ram']
             node = Node(node_id=nid,
                         address=node_configs[str(nid)]['IP'],
                         benchmarks=node_configs[str(nid)]['benchmarks'])
@@ -35,18 +40,18 @@ def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_vari
         for nid in range(num_nodes):
             benchmarks = {'ram':random.choice(ram_variants), 'bandwidth':random.choice(bandwidth_variants)}
             random_ip_address = '.'.join(str(np.random.randint(0, 255)) for _ in range(4))
-            # print(nid, random_ip_address, benchmarks)
+            node_configs[str(nid)]['benchmarks']['ram'] *= 1024
+            total_ram += node_configs[str(nid)]['benchmarks']['ram']
             node = Node(node_id=nid,
                         address=random_ip_address,
                         benchmarks=benchmarks)
             node_pool.append(node)
-    return node_pool
+    return node_pool, total_ram
 
 def cluster_formation(full_model_size, node_pool):
     prelim_clusters = genetic_algorithm(node_pool, full_model_size)
     prelim_clusters = dict(sorted(prelim_clusters.items()))
     prelim_clusters = {new_key: prelim_clusters[old_key] for new_key, old_key in enumerate(prelim_clusters.keys())}
-    # print(prelim_clusters)
     clusters = [Cluster(cid) for cid in prelim_clusters.keys()]
 
     # assigning clusters to nodes based on genetic algorithm output
@@ -265,7 +270,6 @@ def split_model_equal(model=None, num_splits=None, proportions=None, example_arg
 
     try:
         op = pipe.forward(*example_args, **example_kwargs)
-        print('op: ', op)
     except Exception as e:
         proportions = remake_proportions(proportions)
         print('Remade proportions: ', proportions)
@@ -349,22 +353,33 @@ def delete_all_folders(path):
         if os.path.isdir(folder_path):
             shutil.rmtree(folder_path)
 
+def get_memory_reqs(model=None, input_size=None, depth=3):
+    batchsize = input_size[0]
+    single_batch_input_size = (1,*input_size[1:])
+    summary = torchinfo.summary(model, single_batch_input_size, depth=depth, verbose=0)
+    peak_usage = summary.to_megabytes(
+                    summary.total_input + 
+                    summary.total_output_bytes * batchsize + 
+                    summary.total_param_bytes
+                )
+    peak_usage = int(math.ceil(peak_usage))
+    print('\nModel Memory: ', peak_usage)
+    return peak_usage
 
-def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportions=[],
+def clusterize(model=None,  example_args = (), example_kwargs = {}):
     """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
 
     :param model: Pytorch Model, defaults to None
     :raises ValueError: If the sum of the node RAMs in a cluster does not exceed full model's size.
     """        
-    random.seed(42)
-    np.random.seed(42)
 
     path = 'node_data/'
     delete_all_folders(path)
 
-    node_pool = spawn_node_pool(mode='load_from_configs')
-
-    cluster_pool = cluster_formation(full_model_size=len(model.state_dict()), node_pool=node_pool)
+    full_model_size = get_memory_reqs(model=model, input_size=example_args[0].shape)
+    node_pool, total_ram = spawn_node_pool(mode='load_from_configs')
+    assert total_ram > full_model_size
+    cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool)
 
     for node in node_pool:
         node_path = 'node_data/cluster_{}/{}'.format(node.cluster_id, node.address)
@@ -400,8 +415,7 @@ def clusterize(model=None,  example_args = (), example_kwargs = {}): #proportion
                 current_node.backward_target_port = cluster_node_ip_addresses[i-1].split(':')[1]
 
         split_model_equal(model=model,
-                        # num_splits=len(cluster.nodes),
-                        proportions=cluster_proportions,#proportions, 
+                        proportions=cluster_proportions,
                         example_args=example_args,
                         example_kwargs=example_kwargs,
                         cluster_path='node_data/cluster_{}'.format(cluster.cid), 
