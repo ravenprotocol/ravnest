@@ -406,7 +406,7 @@ class Node():
                         # print('y_train: ', targets[1])
 
                         targets = targets[1].to(self.device)
-                        # targets = targets.to(self.device)
+                        # targets = targets.to(self.device)    # For BERT
 
                     update_flag = False
                     if (self.n_backwards + 1) % self.update_frequency == 0:

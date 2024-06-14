@@ -27,7 +27,9 @@ class Trainer():
                 attention_mask = data['attention_mask']
                 token_type_ids = data['token_type_ids']
                 
-                self.node.forward_compute(data_id=data_id, tensors=attention_mask, l_input_ids_=input_ids, l_token_type_ids_=token_type_ids)
+                # self.node.forward_compute(data_id=data_id, tensors=attention_mask, l_input_ids_=input_ids, l_token_type_ids_=token_type_ids)
+                self.node.forward_compute(data_id=data_id, tensors=input_ids, l_token_type_ids_=token_type_ids, l_attention_mask_=attention_mask)
+                
                 self.n_forwards += 1                
                 data_id += (self.batch_size // self.step_size)
 
