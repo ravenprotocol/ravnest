@@ -3,7 +3,7 @@ import numpy as np
 import time
 
 class Trainer():
-    def __init__(self, node=None, train_loader=None, val_loader=None, save=False, epochs=1, batch_size=64, step_size=1, device=torch.device('cpu'), inputs_dtype=None):
+    def __init__(self, node=None, train_loader=None, val_loader=None, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
         self.node = node
         self.train_loader = train_loader
 
@@ -14,7 +14,7 @@ class Trainer():
         self.step_size = step_size
         self.n_forwards = 0
         self.inputs_dtype = inputs_dtype
-        self.device = device
+        self.device = node.device
 
     def train(self):
         t1 = time.time()

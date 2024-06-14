@@ -1,13 +1,11 @@
 import numpy as np
-import time
 import torch
 from torch.utils.data import DataLoader
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
-from ravnest.node import Node
-from ravnest.trainer import Trainer
-from ravnest.utils import load_node_json_configs
+from ravnest import Node, Trainer, set_seed
 
+set_seed(42)
 
 def to_categorical(x, n_col=None):
     if not n_col:
@@ -39,17 +37,9 @@ val_loader = DataLoader(list(zip(X_test,y_test)), shuffle=False, batch_size=64)
 
 if __name__ == '__main__':
 
-    node_name = 'node_0'
-
-    node_metadata = load_node_json_configs(node_name=node_name)
-    model = torch.jit.load(node_metadata['template_path']+'submod.pt')
-    optimizer=torch.optim.Adam
-    
-    node = Node(name = node_name, 
-                model = model, 
-                optimizer = optimizer,
-                device=torch.device('cuda'),
-                **node_metadata
+    node = Node(name = 'node_0', 
+                optimizer = torch.optim.Adam,
+                device=torch.device('cpu')
                 )
 
     trainer = Trainer(node=node,

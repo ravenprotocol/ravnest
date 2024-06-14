@@ -3,10 +3,10 @@ import numpy as np
 import time
 from sklearn import datasets
 from torch.utils.data import DataLoader
-from ravnest.node import Node
-from ravnest.utils import load_node_json_configs
+from ravnest import Node, set_seed
 from sklearn.model_selection import train_test_split
 
+set_seed(42)
 
 def to_categorical(x, n_col=None):
     if not n_col:
@@ -38,21 +38,12 @@ val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32
 
 if __name__ == '__main__':
     
-    node_name = 'node_2'
-
-    node_metadata = load_node_json_configs(node_name=node_name)
-    model = torch.jit.load(node_metadata['template_path']+'submod.pt')
-    optimizer=torch.optim.Adam
-    criterion = torch.nn.functional.mse_loss
-
-    node = Node(name = node_name, 
-                model = model, 
-                optimizer = optimizer,
-                criterion = criterion, 
+    node = Node(name = 'node_2',
+                optimizer = torch.optim.Adam,
+                criterion = torch.nn.functional.mse_loss, 
                 labels = train_loader, 
                 test_labels=val_loader,
-                device=torch.device('cuda'),
-                **node_metadata
+                device=torch.device('cpu')
                 )
       
     while True:

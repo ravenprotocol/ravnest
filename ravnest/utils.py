@@ -146,6 +146,11 @@ def extract_tensor_from_compression_float16(tensor, original_dtype):
     return tensor
 
 def set_seed(seed=42):
+    """Set the seed for random number generators across torch, numpy and random modules. Handles seed for torch.cuda based on GPU availability.
+    
+    :param seed: seed number, defaults to 42
+    :type seed: int, optional
+    """
     random.seed(seed)
     torch.manual_seed(seed)
     # torch.manual_seed_all(42)

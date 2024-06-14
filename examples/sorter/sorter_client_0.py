@@ -1,15 +1,9 @@
 import torch
 from torch.utils.data import DataLoader
-from ravnest.node import Node
-from ravnest.trainer import Trainer
-from ravnest.utils import load_node_json_configs
-import time
-import numpy as np
-import random
+from ravnest import Node, Trainer, set_seed
 import pickle
 
-np.random.seed(42)
-random.seed(42)
+set_seed(42)
 
 with open('examples/sorter/sorter_data/X_train.pkl', 'rb') as fout_X:
     X_train = pickle.load(fout_X)
@@ -21,17 +15,9 @@ train_loader = DataLoader(list(zip(X_train,y_train)), shuffle=False, batch_size=
 
 if __name__ == '__main__':
 
-    node_name = 'node_0'
-
-    node_metadata = load_node_json_configs(node_name=node_name)
-    model = torch.jit.load(node_metadata['template_path']+'submod.pt')
-    optimizer=torch.optim.Adam
-    
-    node = Node(name = node_name, 
-                model = model, 
-                optimizer = optimizer,
-                device=torch.device('cpu'),
-                **node_metadata
+    node = Node(name = 'node_0',
+                optimizer = torch.optim.Adam,
+                device=torch.device('cpu')
                 )
 
     trainer = Trainer(node=node,

@@ -29,13 +29,20 @@ class Node():
         self.reduce_lock = mp.Lock()
         self.gather_lock = mp.Lock()
 
+        node_metadata = load_node_json_configs(node_name=name)
+        kwargs.update(node_metadata)
+
         self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
         self.name = name
         self.loss_filename = loss_filename
 
         self.reset()
 
-        self.model = model
+        if model is None:
+            self.model = torch.jit.load(kwargs['template_path']+'submod.pt')
+        else:
+            self.model = model
+        
         self.device = device
         self.compression = compression
 
