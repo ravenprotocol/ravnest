@@ -1,7 +1,7 @@
 import torch
 from datasets import load_from_disk
 from ravnest import Node, set_seed
-from bert_trainer import Trainer
+from bert_trainer import BERT_Trainer
 from torch.utils.data import DataLoader
 from torch_optimizer import Lamb
 from transformers import BertTokenizerFast, DataCollatorForLanguageModeling
@@ -52,9 +52,9 @@ if __name__ == '__main__':
                 lr_step_on_epoch_change=False
                 )
 
-    trainer = Trainer(node=node,
+    # Custom Trainer Class
+    trainer = BERT_Trainer(node=node,
                       train_loader=dataloader,
-                      epochs=epochs,
-                      batch_size=8)
+                      epochs=epochs)
 
     trainer.train()

@@ -4,9 +4,46 @@ import time
 
 class Trainer():
     def __init__(self, node=None, lr_scheduler=None, lr_scheduler_params={}, train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
+        """A Trainer class for training machine learning models with support for custom learning rate schedulers, training and validation data loaders, and configurable training parameters.
+
+        Attributes:
+        -----------
+        node : object
+            An object that contains the model and optimizer for training.
+        lr_scheduler : object, optional
+            Learning rate scheduler for the optimizer.
+        lr_scheduler_params : dict, optional
+            Parameters for the learning rate scheduler.
+        train_loader : DataLoader
+            DataLoader for the training dataset.
+        val_loader : DataLoader, optional
+            DataLoader for the validation dataset.
+        val_freq : int, optional
+            Frequency of validation checks during training, default is 1.
+        save : bool, optional
+            Flag to indicate whether to save the model after training, default is False.
+        epochs : int, optional
+            Number of epochs to train the model, default is 1.
+        batch_size : int, optional
+            Size of the training batches, default is 64.
+        step_size : int, optional
+            Step size for gradient updates, default is 1.
+        inputs_dtype : torch.dtype, optional
+            Data type for the input tensors, default is None.
+        n_forwards : int
+            Counter for the number of forward passes, initialized to 0.
+
+        Methods:
+        --------
+        train():
+            Trains the model for a specified number of epochs.
+        pred(input):
+            Makes a prediction using the trained model on the given input.
+        evaluate():
+            Evaluates the model using the validation dataset.
+        """
         self.node = node
         self.train_loader = train_loader
-
         self.val_loader = val_loader
         self.val_freq = val_freq
         self.save = save
@@ -50,7 +87,6 @@ class Trainer():
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
             print('Epoch: ', epoch)
-            # print('n_forward: ', self.n_forwards, '  node.n_backward: ', self.node.n_backwards)
         
         print('Training Done!: ', time.time() - t1, ' seconds')
 

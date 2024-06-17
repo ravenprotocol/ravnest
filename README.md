@@ -22,7 +22,7 @@ Generate the submodel files:
 python cluster_formation.py
 ```
 
-> **_NOTE:_**  Uncomment the correct lines in ```cluster_formation.py``` for CNN/GPT-Sorter/ResNet50 models.
+> **_NOTE:_**  Uncomment the correct lines in ```cluster_formation.py``` for CNN/ResNet-50/Inception-V3/GPT-Sorter/BERT models.
 
 Execution of Clients (in 3 terminals) for CNN:
 ```bash

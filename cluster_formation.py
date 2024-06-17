@@ -61,7 +61,6 @@ clusterize(model=model, example_args=(example_args,))
 # attention_mask = test_ip['attention_mask']
 # token_type_ids = test_ip['token_type_ids']
 
-# # clusterize(model=model, example_args=(input_ids,))
 # model = BertForPreTraining(config)
 # clusterize(model=model, example_args=(input_ids,), 
 #             example_kwargs={'attention_mask':attention_mask, 'token_type_ids':token_type_ids})
