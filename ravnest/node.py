@@ -21,6 +21,41 @@ from .protos.server_pb2_grpc import add_CommServerServicer_to_server
 mp = multiprocessing.get_context('spawn')
 
 class Node():
+    """
+    Responsible for managing the computational and communication aspects of a distributed machine learning model, including model initialization, parameter synchronization, forward and backward passes, loss computation, and communication between different nodes in the system.
+    
+    :param name: The name of the node.
+    :type name: str
+    :param model: The PyTorch model associated with the node.
+    :type model: torch.nn.Module
+    :param optimizer: The optimizer used for training the model.
+    :type optimizer: torch.optim.Optimizer
+    :param optimizer_params: Parameters for the optimizer.
+    :type optimizer_params: dict
+    :param lr_scheduler: The learning rate scheduler.
+    :type lr_scheduler: torch.optim.lr_scheduler
+    :param lr_scheduler_params: Parameters for the learning rate scheduler.
+    :type lr_scheduler_params: dict
+    :param lr_step_on_epoch_change: Whether to step the learning rate scheduler on epoch change.
+    :type lr_step_on_epoch_change: bool
+    :param criterion: The loss function.
+    :type criterion: callable
+    :param update_frequency: Frequency of model parameter updates.
+    :type update_frequency: int
+    :param labels: Training labels.
+    :type labels: list or torch.Tensor
+    :param test_labels: Test labels for validation.
+    :type test_labels: list or torch.Tensor
+    :param device: The device on which the model will be run (CPU or GPU).
+    :type device: torch.device
+    :param loss_filename: The filename to save loss values.
+    :type loss_filename: str
+    :param compression: Whether to use compression.
+    :type compression: bool
+    :param kwargs: Additional arguments.
+    :type kwargs: dict
+    """
+
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
                  update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, **kwargs):
         self.manager = mp.Manager()
@@ -203,6 +238,29 @@ class Node():
                     reduce_ring_buffers = None, gather_ring_buffers = None, 
                     forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None,
                     reduce_iteration = None, gather_iteration = None):
+        """Initialize the gRPC server for handling communication with other nodes.
+
+        :param load_forward_buffer: Shared buffer for incoming forward pass data, defaults to None
+        :type load_forward_buffer: multiprocessing.Manager.list, optional
+        :param load_backward_buffer: Shared buffer for incoming backward pass data, defaults to None
+        :type load_backward_buffer: multiprocessing.Manager.list, optional
+        :param reduce_ring_buffers: Shared dictionary for reduce operation buffers, defaults to None
+        :type reduce_ring_buffers: multiprocessing.Manager.dict, optional
+        :param gather_ring_buffers: Shared dictionary for gather operation buffers, defaults to None
+        :type gather_ring_buffers: multiprocessing.Manager.dict, optional
+        :param forward_lock: Lock for synchronizing access to forward buffers, defaults to None
+        :type forward_lock: multiprocessing.Lock, optional
+        :param backward_lock: Lock for synchronizing access to backward buffers, defaults to None
+        :type backward_lock: multiprocessing.Lock, optional
+        :param reduce_lock: Lock for synchronizing reduce operations, defaults to None
+        :type reduce_lock: multiprocessing.Lock, optional
+        :param gather_lock: Lock for synchronizing gather operations, defaults to None
+        :type gather_lock: multiprocessing.Lock, optional
+        :param reduce_iteration: Shared dictionary for reduce iteration counts, defaults to None
+        :type reduce_iteration: multiprocessing.Manager.dict, optional
+        :param gather_iteration: Shared dictionary for gather iteration counts, defaults to None
+        :type gather_iteration: multiprocessing.Manager.dict, optional
+        """
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         add_CommServerServicer_to_server(GrpcService(
             load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, 
@@ -213,6 +271,8 @@ class Node():
 
 
     def grpc_server_serve(self):
+        """Starts the gRPC server and listens for incoming connections.
+        """
         self.server.add_insecure_port(self.local_address)
         self.server.start()
         print('Listening on : ', self.local_address)
@@ -221,9 +281,18 @@ class Node():
 
 
     def start_grpc_server(self):
+        """Start the gRPC server asynchronously.
+
+        Uses asyncio to start the gRPC server in an asynchronous manner.
+        """
         asyncio.get_event_loop().run_until_complete(self.grpc_server_serve())
 
     def start(self):
+        """Start the gRPC server and buffer checking threads.
+
+        Spawns a process for serving gRPC requests and starts a thread
+        for checking and processing incoming data buffers.
+        """
         print('Main process: ', os.getpid())
         serve_process = mp.Process(target=self.grpc_server_serve, daemon=True)
         serve_process.start()
@@ -235,6 +304,11 @@ class Node():
         buffer_thread.start()
 
     def check_load_forward_buffer(self):
+        """Check and process the load forward buffer for incoming data.
+
+        Continuously monitors the load forward buffer and processes incoming
+        data for forward pass computations.
+        """
         while True:
             send_trigger_threads = []
             if len(self.load_backward_buffer) != 0:
@@ -540,6 +614,18 @@ class Node():
                         
 
     def forward_compute(self, data_id=None, tensors=None, **kwargs):
+        """Initiate a forward computation request.
+
+        Adds the forward computation request to the load forward buffer,
+        ensuring synchronization and handling of computational resources.
+
+        :param data_id: Identifier for the data batch, defaults to None
+        :type data_id: Any, optional
+        :param tensors: Input tensors for the forward computation, defaults to None
+        :type tensors: torch.Tensor, optional
+        :param kwargs: Additional keyword arguments for the computation, defaults to {}
+        :type kwargs: dict, optional
+        """
         data = {'data':tensors, 'kwargs':kwargs, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
 
 
@@ -559,6 +645,16 @@ class Node():
             time.sleep(0)
 
     def no_grad_forward_compute(self, tensors=None, output_type=None):
+        """Perform a forward pass without computing gradients.
+
+        Executes a forward pass without gradient computation and sends
+        the output to the designated target host and port.
+
+        :param tensors: Input tensors for the forward pass, defaults to None
+        :type tensors: torch.Tensor, optional
+        :param output_type: Type of output computation (e.g., validation accuracy), defaults to None
+        :type output_type: str, optional
+        """
         tensors = tensors.to(self.device)
         # self.comm_session.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
@@ -580,10 +676,22 @@ class Node():
         self.node_status = NodeStatus.IDLE
 
     def wait_for_backwards(self):
+        """Wait until all backward passes are completed.
+
+        Checks and waits until all initiated backward computations are finished
+        before proceeding with further operations.
+
+        """
         while self.n_backwards < self.n_forwards:
             time.sleep(1)
 
     def trigger_save_submodel(self):
+        """Trigger saving of the current submodel state.
+
+        Saves the current state of the model to disk and optionally sends
+        the updated model state to the designated target host and port.
+
+        """
         script = torch.jit.script(self.model)
         os.makedirs('trained_submodels', exist_ok=True)
         script.save('trained_submodels/{}.pt'.format(self.submod_file))
@@ -591,6 +699,12 @@ class Node():
         print('SAVE done')
 
     def reset(self):
+        """Reset the node's auxiliary and stateful data.
+
+        Cleans up temporary directories and files associated with the node,
+        preparing it for a fresh start.
+
+        """
         if os.path.exists('{}_aux'.format(self.name)):
             shutil.rmtree('{}_aux'.format(self.name))
         os.makedirs('{}_aux'.format(self.name), exist_ok=True)

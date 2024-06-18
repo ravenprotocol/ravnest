@@ -378,7 +378,7 @@ def get_memory_reqs(model=None, input_size=None, input_data=None, depth=3):
     return peak_usage
 
 def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False):
-    """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
+    """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ``node_data/node_configs.json`` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ``node_data/nodes/`` folder. These metadata files are later used by ``ravnest.node.Node`` class to load all relevant attributes pertaining to a node.
 
     :param model: The complete Pytorch Model that needs to be split, defaults to None
     :param example_args: A sample torch tensor that the model expects as input during forward pass, defaults to ()
