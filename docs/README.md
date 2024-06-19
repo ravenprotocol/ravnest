@@ -28,6 +28,8 @@ make html
 
 Now open ```docs/_build/html/index.html``` file using Live Server on VS Code to view the full documentation in your browser.
 
+> **_NOTE:_**  If you face any issues with the webpage render not updating as you add new content or modify to the scripts, it would be a good idea to delete ```_build``` folder, run ```make clean``` and try ```make html``` again.
+
 ## Contributing to Documentation
 
 1. Set up the docs on your system locally.
