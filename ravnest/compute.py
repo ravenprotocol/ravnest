@@ -82,7 +82,7 @@ class Compute():
             self.model.train()
 
         print('Middle Forward fpid: ',forward_pass_id)
-        model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.MID)
+        model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.STEM)
 
         rng_state_cpu = torch.get_rng_state()
         rng_state_gpu = None
@@ -248,7 +248,7 @@ class Compute():
             self.model.train()
 
         outputs = self.model(*model_args.values())
-        # print(outputs, targets)
+
         loss = self.criterion(outputs, targets)
 
         print('Before backward GPU: ')

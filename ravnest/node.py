@@ -67,6 +67,7 @@ class Node():
         node_metadata = load_node_json_configs(node_name=name)
         kwargs.update(node_metadata)
 
+        self.node_type = kwargs.get('node_type', None)
         self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
         self.name = name
         self.loss_filename = loss_filename
@@ -130,18 +131,26 @@ class Node():
         # print('Param address mapping: ', self.param_address_mapping)
         # print('State dict: ', self.model.state_dict().keys())
 
-        self.criterion = criterion
+        if self.node_type == NodeTypes.LEAF:
+            self.criterion = criterion
 
-        if test_labels is not None:
-            self.test_labels = test_labels
+            if test_labels is not None:
+                self.test_labels = test_labels
+                self.test_labels_iterator = None
+            
+            if labels is not None:
+                self.labels = labels
+                if isinstance(labels, torch.Tensor):
+                    self.labels_iterator = labels
+                else:
+                    self.labels_iterator = iter(labels)
+
+        else:
+            self.criterion = None
+            self.test_labels = None
             self.test_labels_iterator = None
-        
-        if labels is not None:
-            self.labels = labels
-            if isinstance(labels, torch.Tensor):
-                self.labels_iterator = labels
-            else:
-                self.labels_iterator = iter(labels)
+            self.labels = None
+            self.labels_iterator = None
 
         self.net_val_accuracy = []
 
@@ -178,16 +187,13 @@ class Node():
                 self.output_template = pickle.load(fout)
             # print(self.input_template)
             self.model_inputs_template = None
-            if self.backward_target_host is None and self.backward_target_port is None:
-                self.node_type = NodeTypes.ROOT
+            if self.node_type == NodeTypes.ROOT:
                 with open('{}model_inputs.pkl'.format(kwargs.get('template_path', None)), 'rb') as fout:
                     self.model_inputs_template = pickle.load(fout)
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
-            elif self.forward_target_host is None and self.forward_target_port is None:
-                self.node_type = NodeTypes.LEAF
+            elif self.node_type == NodeTypes.LEAF:
                 self.optimizer = optimizer(self.model.parameters(), **optimizer_params)
-            else:
-                self.node_type = NodeTypes.MID
+            elif self.node_type == NodeTypes.STEM:
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
 
             self.lr_scheduler = None

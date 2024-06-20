@@ -1,6 +1,6 @@
 class NodeTypes(object):
     LEAF = "leaf"
-    MID = "mid"
+    STEM = "stem"
     ROOT = "root"
 
 class ActionTypes(object):

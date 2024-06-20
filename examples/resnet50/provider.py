@@ -1,9 +1,8 @@
 # Note: Place the tiny-imagenet-200 Dataset in home directory
 import torch
-import time
-from ravnest import Node, set_seed
-from torchvision import transforms
+from ravnest import Node, Trainer, set_seed
 from torch.utils.data import DataLoader
+from torchvision import transforms
 from TinyImageNet import TinyImageNet
 
 set_seed(42)
@@ -36,6 +35,7 @@ def get_dataset(root=None):
     # train_subset = Subset(training_set, range(1000))
     train_loader = DataLoader(training_set, batch_size=100, shuffle=True, generator=generator, num_workers=0)
 
+
     val_set = TinyImageNet(root, 'val', transform=valid_transform, in_memory=in_memory)
     val_loader = DataLoader(val_set, batch_size=100, shuffle=False, num_workers=0)
 
@@ -45,7 +45,7 @@ train_loader, val_loader = get_dataset(root='./tiny-imagenet-200')
 
 if __name__ == '__main__':
 
-    node = Node(name = 'node_2', 
+    node = Node(name = 'node_0',
                 optimizer = torch.optim.SGD,
                 optimizer_params = {'lr':0.01, 'momentum':0.9, 'weight_decay':0.0005},
                 criterion = torch.nn.CrossEntropyLoss(), 
@@ -54,5 +54,14 @@ if __name__ == '__main__':
                 device=torch.device('cuda')
                 )
 
-    while True:
-        time.sleep(0)
+    trainer = Trainer(node=node,
+                      train_loader=train_loader,
+                      val_loader=val_loader,
+                      val_freq=100,
+                      epochs=5,
+                      batch_size=100,
+                      step_size=100,
+                      save=True)
+
+    trainer.train()
+    trainer.evaluate()

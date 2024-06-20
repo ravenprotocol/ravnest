@@ -528,6 +528,15 @@ def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False)
         node_meta['backward_target_host'] = node.backward_target_host
         node_meta['backward_target_port'] = int(node.backward_target_port) if node.backward_target_port is not None else None
 
+        if node_meta['forward_target_host'] is not None and node_meta['backward_target_host'] is None:
+            node_meta['node_type'] = 'root'
+        elif node_meta['forward_target_host'] is None and node_meta['backward_target_host'] is not None:
+            node_meta['node_type'] = 'leaf'
+        elif node_meta['forward_target_host'] is not None and node_meta['backward_target_host'] is not None:
+            node_meta['node_type'] = 'stem'
+        else:
+            node_meta['node_type'] = None
+
         with open('node_data/nodes/node_{}.json'.format(node.node_id), 'w') as fp:
             json.dump(node_meta, fp)
     print('\nClusters Formed Successfully!')

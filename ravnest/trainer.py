@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import time
+from .strings import *
 
 class Trainer():
     """
@@ -35,6 +36,8 @@ class Trainer():
 
     def __init__(self, node=None, lr_scheduler=None, lr_scheduler_params={}, train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
         self.node = node
+        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
+            return
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.val_freq = val_freq
@@ -48,6 +51,11 @@ class Trainer():
         if lr_scheduler is not None:
             self.lr_scheduler = lr_scheduler(self.node.optimizer, **lr_scheduler_params)
 
+    def prelim_checks(self):
+        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
+            while True:
+                time.sleep(0)
+
     def train(self):
         """Train the model using the specified training and validation data loaders.
 
@@ -55,6 +63,7 @@ class Trainer():
         performing forward computations, updating parameters, and optionally
         evaluating on validation data.
         """
+        self.prelim_checks()
         t1 = time.time()
         self.n_forwards = 0
         for epoch in range(self.epochs):
@@ -99,6 +108,8 @@ class Trainer():
         :return: Prediction result
         :rtype: torch.Tensor
         """
+        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
+            return
         if isinstance(data, np.ndarray):
             pred = self.node.no_grad_forward_compute(tensors=torch.tensor(data, dtype=torch.float32), output_type='accuracy')
         else:
@@ -111,5 +122,7 @@ class Trainer():
         Performs inference on validation data and computes validation accuracy
         using the trained model.
         """
+        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
+            return
         for X_test, y_test in self.val_loader:
             self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')

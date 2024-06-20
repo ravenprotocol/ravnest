@@ -1,7 +1,7 @@
 import torch
-import time
 from datasets import load_from_disk
 from ravnest import Node, set_seed
+from bert_trainer import BERT_Trainer
 from torch.utils.data import DataLoader
 from torch_optimizer import Lamb
 from transformers import BertTokenizerFast, DataCollatorForLanguageModeling, BertConfig
@@ -58,16 +58,21 @@ if __name__ == '__main__':
     scheduler = get_linear_schedule_with_warmup
     scheduler_params = {'num_warmup_steps':5000, 'num_training_steps':num_training_steps}
 
-    node = Node(name = 'node_2', 
+    node = Node(name = 'node_0', 
                 optimizer = optimizer,
-                device=torch.device('cuda'),
+                optimizer_params=optimizer_params,
                 update_frequency = update_frequency,
+                device=torch.device('cuda'),                
                 lr_scheduler = scheduler,
                 lr_scheduler_params = scheduler_params,
                 lr_step_on_epoch_change=False,
                 criterion = loss_fn, 
                 labels = dataloader
                 )
-    
-    while True:
-        time.sleep(0)
+
+    # Custom Trainer Class
+    trainer = BERT_Trainer(node=node,
+                      train_loader=dataloader,
+                      epochs=epochs)
+
+    trainer.train()

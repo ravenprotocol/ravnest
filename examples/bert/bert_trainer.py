@@ -5,6 +5,7 @@ class BERT_Trainer(ravnest.Trainer):
         super().__init__(node=node, train_loader=train_loader, epochs=epochs)
 
     def train(self):
+        self.prelim_checks()
         for epoch in range(self.epochs):
             data_id = 0
             for batch in self.train_loader:

@@ -1,10 +1,9 @@
-# Note: Place the tiny-imagenet-200 Dataset in home directory
-import torch
 import time
-from ravnest import Node, set_seed
+import torch
+from ravnest import Node, Trainer, set_seed
+from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import CIFAR10
-from torch.utils.data import DataLoader
 
 set_seed(42)
 
@@ -36,14 +35,22 @@ train_loader, val_loader = get_dataset(root='./cifar10/')
 
 if __name__ == '__main__':
 
-    node = Node(name = 'node_2',
+    node = Node(name = 'node_0', 
                 optimizer = torch.optim.SGD,
                 optimizer_params = {'lr':0.01, 'momentum':0.9, 'weight_decay':0.0005},
                 criterion = torch.nn.CrossEntropyLoss(), 
                 labels = train_loader,
                 test_labels = val_loader,
-                device=torch.device('cpu')
+                device=torch.device('cuda')
                 )
+        
+    trainer = Trainer(node=node,
+                      train_loader=train_loader,
+                      val_loader=val_loader,
+                      val_freq=20,
+                      epochs=10,
+                      batch_size=64,
+                      step_size=64,
+                      save=True)
 
-    while True:
-        time.sleep(0)
+    trainer.train()
