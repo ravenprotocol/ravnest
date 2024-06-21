@@ -22,7 +22,7 @@ ravnest.trainer
 
 ravnest.utils
 -------------
-.. autofunction:: load_node_json_configs
+.. autofunction:: set_seed
 
 .. automodule:: ravnest.operations.utils
 .. currentmodule:: ravnest.operations.utils

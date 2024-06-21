@@ -29,7 +29,7 @@ extensions = ['sphinx.ext.autodoc',
               'sphinx_rtd_theme']
 
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'README.md']
 
 autodoc_mock_imports = ['torch',
                         'grpcio',

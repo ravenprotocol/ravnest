@@ -19,6 +19,7 @@ import shutil
 import copy
 import torchinfo
 import math
+import inspect
 
 def spawn_node_pool(num_nodes=None, mode=None, ram_variants=None, bandwidth_variants=None):
     node_pool = []
@@ -353,30 +354,58 @@ def delete_all_folders(path):
         if os.path.isdir(folder_path):
             shutil.rmtree(folder_path)
 
-def get_memory_reqs(model=None, input_size=None, depth=3):
-    batchsize = input_size[0]
-    single_batch_input_size = (1,*input_size[1:])
-    summary = torchinfo.summary(model, single_batch_input_size, depth=depth, verbose=0)
-    peak_usage = summary.to_megabytes(
-                    summary.total_input + 
-                    summary.total_output_bytes * batchsize + 
-                    summary.total_param_bytes
-                )
+def get_memory_reqs(model=None, input_size=None, input_data=None, depth=3):
+    assert input_size is not None or input_data is not None
+    if input_size is not None:
+        batchsize = input_size[0]
+        single_batch_input_size = (1,*input_size[1:])
+        summary = torchinfo.summary(model, single_batch_input_size, depth=depth, verbose=0)
+        peak_usage = summary.to_megabytes(
+                        summary.total_input + 
+                        summary.total_output_bytes * batchsize + 
+                        summary.total_param_bytes
+                    )   
+    elif input_data is not None:
+        summary = torchinfo.summary(model, input_data=input_data, depth=depth, verbose=0)
+        peak_usage = summary.to_megabytes(
+                        summary.total_input + 
+                        summary.total_output_bytes + 
+                        summary.total_param_bytes
+                    )
     peak_usage = int(math.ceil(peak_usage))
     print('\nModel Memory: ', peak_usage)
+    
     return peak_usage
 
-def clusterize(model=None,  example_args = (), example_kwargs = {}):
-    """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ```node_data/node_configs.json``` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ```node_data/nodes/``` folder. These metadata files are later used by ```ravnest.node.Node``` class to load all relevant attributes pertaining to a node.
+def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False):
+    """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ``node_data/node_configs.json`` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ``node_data/nodes/`` folder. These metadata files are later used by ``ravnest.node.Node`` class to load all relevant attributes pertaining to a node.
 
-    :param model: Pytorch Model, defaults to None
+    :param model: The complete Pytorch Model that needs to be split, defaults to None
+    :param example_args: A sample torch tensor that the model expects as input during forward pass, defaults to ()
+    :param example_kwargs: Any extra sample inputs that the model expects passed as a dictionary, defaults to {} 
+    :param pass_data: If set to true, this performs a full forward pass with ``example_arg`` tensor to calculate the size of full model. If set to false, it will still calculate full model size using simpler mathematical techniques. Note that disabling this may not work for all models. Defaults to False
     :raises ValueError: If the sum of the node RAMs in a cluster does not exceed full model's size.
     """        
 
     path = 'node_data/'
     delete_all_folders(path)
 
-    full_model_size = get_memory_reqs(model=model, input_size=example_args[0].shape)
+    if len(example_args) != 0 and len(example_kwargs) == 0:
+        if pass_data:
+            full_model_size = get_memory_reqs(model=model, input_data=example_args[0])
+        else:
+            full_model_size = get_memory_reqs(model=model, input_size=example_args[0].shape)
+    elif len(example_args) != 0 and len(example_kwargs) != 0:
+        frame = inspect.currentframe().f_back
+        variable_names = {id(v): k for k, v in frame.f_locals.items()}
+        example_args_names = [variable_names.get(id(item), None) for item in example_args]
+        input_data = {}
+        for n in range(len(example_args_names)):
+            input_data[example_args_names[n]] = example_args[n]
+        for k,v in example_kwargs.items():
+            input_data[k] = v    
+        full_model_size = get_memory_reqs(model=model, input_data=input_data)
+
     node_pool, total_ram = spawn_node_pool(mode='load_from_configs')
     assert total_ram > full_model_size
     cluster_pool = cluster_formation(full_model_size=full_model_size, node_pool=node_pool)
@@ -498,6 +527,15 @@ def clusterize(model=None,  example_args = (), example_kwargs = {}):
         node_meta['forward_target_port'] = int(node.forward_target_port) if node.forward_target_port is not None else None
         node_meta['backward_target_host'] = node.backward_target_host
         node_meta['backward_target_port'] = int(node.backward_target_port) if node.backward_target_port is not None else None
+
+        if node_meta['forward_target_host'] is not None and node_meta['backward_target_host'] is None:
+            node_meta['node_type'] = 'root'
+        elif node_meta['forward_target_host'] is None and node_meta['backward_target_host'] is not None:
+            node_meta['node_type'] = 'leaf'
+        elif node_meta['forward_target_host'] is not None and node_meta['backward_target_host'] is not None:
+            node_meta['node_type'] = 'stem'
+        else:
+            node_meta['node_type'] = None
 
         with open('node_data/nodes/node_{}.json'.format(node.node_id), 'w') as fp:
             json.dump(node_meta, fp)

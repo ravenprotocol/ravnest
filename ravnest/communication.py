@@ -102,7 +102,6 @@ class Communication():
             
             # payload[k]['data'] = out.to(torch.device('cpu'))
             payload[k]['dtype'] = out.dtype
-            print('Dtype in payload: ', payload[k]['dtype'])
             payload[k]['data'] = out.detach().clone().to(torch.device('cpu'))
 
             if self.compression:
