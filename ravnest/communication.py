@@ -131,11 +131,12 @@ class Communication():
                 # ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
                 if self.average_optim:
                     ring_data = {}
+                    optim_state = dict(self.optimizer.state)
                     optim_ring_data = {}
                     for (param_name, model_param), optim_param in zip(self.model.named_parameters(), optimizer_params(self.optimizer)):
                         if param_name in self.ring_param_keys[ring_id]:
-                            ring_data[model_param] = model_param
-                            optim_ring_data[model_param] = optim_param
+                            ring_data[param_name] = model_param
+                            optim_ring_data[param_name] = optim_state[optim_param]
                 else:
                     ring_data = ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
                     optim_ring_data = {}
@@ -266,8 +267,10 @@ class Communication():
             chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size).to(self.device)
             if self.average_optim:
                 for state_param, state in chunked_optim_data[param].items():
-                    chunked_optim_data[param][state_param] = torch.cat(state['data'], dim=state['split_axis']).div(self.ring_size).to(self.device)
-
+                    reduced_tensor = torch.cat(state['data'], dim=state['split_axis']).div(self.ring_size)
+                    if state['reshape']:
+                        reduced_tensor = reduced_tensor.reshape(())
+                    chunked_optim_data[param][state_param] = reduced_tensor.to(self.device)#torch.cat(state['data'], dim=state['split_axis']).div(self.ring_size).to(self.device)
 
         print('Gathered Ring id: ', ring_id)
         self.averaged_params_buffer.update(chunked_data)
