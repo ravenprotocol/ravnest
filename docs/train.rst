@@ -26,7 +26,7 @@ First, define your PyTorch model in the usual way. Ensure it is encapsulated wit
 
     model = DL_Model()
 
-Alternatively, you can load popular models directly from PyTorch-based libraries:
+Or, if you're feeling adventurous, load popular models straight from PyTorch-based libraries:
 
 .. code-block:: python
     :linenos:
@@ -34,7 +34,7 @@ Alternatively, you can load popular models directly from PyTorch-based libraries
     from torchvision.models import resnet50
     model = resnet50()
 
-You can also load a scripted model from a ``.pt`` file using ``torch.jit.load()``:
+For a scripted affair, load a ``.pt`` file using ``torch.jit.load()``:
 
 .. code-block:: python
     :linenos:
@@ -47,7 +47,7 @@ As long as you have a PyTorch model instance, you're all set.
 Defining the Provider Nodes
 ---------------------------
 
-To set up the compute provider nodes, you need a JSON file containing the system specification metadata of each node. In your project directory, create a json file at ``node_data/node_configs.json``.
+To set up the compute provider nodes, craft a JSON file containing the system specification metadata of each node. In your project directory, create a json file at ``node_data/node_configs.json``.
 
 This file should include information such as the node's publicly accessible IP address, available compute memory (can be RAM or VRAM), and network bandwidth details. Below is an example structure of the JSON file:
 
@@ -79,7 +79,7 @@ This file should include information such as the node's publicly accessible IP a
         // Add as many nodes as you need here
     }
 
-The ``ram`` values for each node are mentioned in GBs while the ``bandwidth`` is in Mbps.
+The ``ram`` values for each node, which can signify either CPU RAM or GPU VRAM, are mentioned in GBs while the ``bandwidth`` is in Mbps.
 
 .. note::
     In future releases, we intend to implement mechanisms to dynamically create and update this JSON file as and when new nodes join the training session. For now, we can work by manually defining the provider nodes in the above format.  
@@ -113,6 +113,7 @@ The cluster assigned to each individual provider node will be visible in the log
 
 .. code-block:: text
     :linenos:
+    :emphasize-lines: 1,7,13,19,25,31
     
     Node(0, Cluster(1)) 
     self.IP(0.0.0.0:8080) 
@@ -169,17 +170,12 @@ This makes it easy to identify the roles of each Provider node:
     Node(4) -> Leaf
     Node(5) -> Leaf
 
-Preparing the Provider Scripts
-------------------------------
+Preparing the Provider Script
+-----------------------------
 
-Now that the main model has been divided into sub-models and provider nodes have been organized into clusters, we can prepare the code that each Provider needs to execute according to their position within their designated cluster. The responsibilities and characteristics of the different roles that Providers can take up within a cluster have been covered in detail :ref:`here<provider-reference-label>`.
+Now that the main model has been divided into sub-models and provider nodes have been organized into clusters, we can prepare the unified code that each Provider needs to execute according to their position within their designated cluster. The responsibilities and characteristics of the different roles that Providers can take up within a cluster have been covered in detail :ref:`here<provider-reference-label>`. 
 
-Root
-~~~~
-
-The Root Provider is responsible for managing and distributing the input data across the cluster. It preprocesses the dataset and ensures that data is correctly fed into the cluster's distributed training pipeline.
-
-In decentralized training, it is crucial that the data order is synchronized across all nodes to maintain the integrity of the training process. Since the training loss is ultimately evaluated at the Leaf node (another type of node present at the end of the cluster), the data instances processed by the Root Provider must match those processed by the Leaf Provider. For the training to be accurate, the order of data instances in the ``DataLoader`` used by the Root Provider must be identical to the order in the ``DataLoader`` used by the Leaf Provider. This synchronization ensures that each data instance is paired with the correct true label during training, which is essential for the model to learn correctly. To ensure this, we utilize Ravnest's ``set_seed()`` method and pass the same seed value across all Provider scripts in a cluster. Incase you intend to employ data shuffling inside the DataLoader, we strongly encourage you to additionally define a ``torch.Generator()`` object and pass it on to your ``DataLoader`` instance. Doing so helps maintain the order of the data instances when ``shuffle=True``.
+Here's the template for creating a unified Provider script:
 
 .. code-block:: python
     :linenos:
@@ -202,71 +198,22 @@ In decentralized training, it is crucial that the data order is synchronized acr
 
         train_loader, val_loader = preprocess_dataset()
 
-        node = Node()   # Pass appropriate parameters to define your Node.
+        node = Node(name='node_<id>', ...)   # Pass appropriate parameters to define your Node, including optimizer, criterion, labels, test_labels etc.
 
-        trainer = Trainer()     # Can also be a Custom Trainer that extends Ravnest's Trainer.
+        trainer = Trainer(...)     # Pass appropriate parameters like epochs, train_loader, val_loader etc. Can also be a Custom Trainer class instance that extends Ravnest's Trainer.
 
         trainer.train()     # Commences Training
         trainer.evaluate()  # To check accuracy of model post-training.
 
+.. note::
+    Please ensure that the correct ``name`` is passed to the ``Node()`` instance as a string in the format : ``'node_0'``, ``'node_7'``. Ravnest automatically determines the Provider's role based on this ``name`` parameter, so accuracy is essential.
 
-Stem
-~~~~
+In decentralized training, it is crucial that the data order is synchronized across all nodes to maintain the integrity of the training process. Since the training loss is ultimately evaluated at the Leaf node (another type of node present at the end of the cluster), the data instances processed by the Root Provider must match those processed by the Leaf Provider. 
 
-The Stem Providers act as a crucial intermediary in both the forward and backward passes of the model training process. 
+For the training to be accurate, the order of data instances in the ``DataLoader`` used by the Root Provider must be identical to the order in the ``DataLoader`` used by the Leaf Provider. This synchronization ensures that each data instance is paired with the correct true label during training, which is essential for the model to learn correctly. To ensure this, we utilize Ravnest's ``set_seed()`` method and pass the same seed value across all Provider scripts in a cluster. 
 
-During the forward pass, the Root Provider begins by preprocessing the input data and feeding it into the distributed training pipeline. The Root processes the initial layers of the model and sends the intermediate outputs to the Stem Providers. The Stem Providers, situated in the middle of the pipeline, take these intermediate outputs and perform further computations on them. Essentially, they handle a segment of the model's layers, passing their outputs along to the next node, which could be another Stem Provider or a Leaf Provider. This step-by-step processing allows for efficient handling of large models by distributing the workload across multiple nodes.
-
-In the backward pass, the gradient information needed for updating the model parameters flows in the opposite direction. The Leaf Providers, which are at the end of the pipeline, calculate the initial gradients based on the loss function. They then send these gradients back to the Stem Providers. The Stem Providers receive the gradients, compute the necessary updates for their segment of the model, and pass the gradient information further back to the Root Providers. This hierarchical gradient flow ensures that all parts of the model are updated correctly while balancing the computational load.
-
-.. code-block:: python
-    :linenos:
-
-    import torch
-    import time
-    from ravnest import Node, set_seed
-
-    set_seed(42)
-
-    if __name__ == '__main__':
-        
-        node = Node()   # Pass appropriate parameters to define your Node.
-
-        while True:
-            time.sleep(0)
-
-
-Leaf
-~~~~
-
-The Leaf Provider is vital for decentralized training as it handles the final stages of the cluster's training pipeline. Positioned at the end of a cluster, Leaf Providers receive processed data from other nodes (Root and Stem Providers) and perform the final computations needed for training the model. They ensure that the loss is computed accurately, which is essential for effective backpropagation and model learning. By handling the end tasks of the data pipeline, Leaf Providers contribute to the overall efficiency and performance of distributed training. 
-
-.. code-block:: python
-    :linenos:
-
-    import time
-    import torch
-    from torch.utils.data import DataLoader
-    from ravnest import Node, Trainer, set_seed
-
-    set_seed(42)
-
-    def preprocess_dataset():
-        """
-        Method to pre-process the dataset.
-        Returns PyTorch DataLoader Objects for Training and Validation with torch.Generator() object passed if shuffle=True.
-        """
-        ...
-        return train_loader, val_loader
-
-    if __name__ == '__main__':
-
-        train_loader, val_loader = preprocess_dataset()
-
-        node = Node()   # Pass appropriate parameters to define your Node.
-
-        while True:
-            time.sleep(0)
+Incase you intend to employ data shuffling inside the DataLoader, we strongly encourage you to additionally define a ``torch.Generator()`` object and pass it on to your ``DataLoader`` instance. Doing so helps maintain the order of the data instances when ``shuffle=True``.
 
 In the template provided above, ensure to include the ``labels`` and ``test_labels`` parameters (as ``DataLoader`` instances) when initializing ``Node()``, enabling accurate evaluation of training and validation losses with the correct labels. 
 
+Refer to the :ref:`API Documentation<api-reference-label>` section for details on the other parameters that are required by ``Node`` and ``Trainer``.

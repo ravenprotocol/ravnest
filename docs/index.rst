@@ -38,6 +38,7 @@ Ravnest is an asynchronous decentralized training framework designed for large m
    roles
    train
    walkthrough
+   features
    contributing
 
 
