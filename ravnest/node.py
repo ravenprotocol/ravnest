@@ -57,7 +57,7 @@ class Node():
     """
 
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
-                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, **kwargs):
+                 update_frequency = 1, reduce_factor=1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, average_optim=False, **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -167,7 +167,7 @@ class Node():
         self.latest_backward_id = 0
         self.update_frequency = update_frequency
 
-        self.reduce_threshold = self.update_frequency * 3
+        self.reduce_threshold = self.update_frequency * reduce_factor
 
         self.submod_file = kwargs.get('submod_file', None)
         self.node_status = NodeStatus.IDLE
@@ -175,6 +175,7 @@ class Node():
 
         self.averaged_params_buffer = {}
         self.average_no = 0
+        self.average_optim = average_optim
 
         self.cluster_length = kwargs['cluster_length']
 
@@ -234,6 +235,7 @@ class Node():
                                           tensor_id=self.tensor_id, 
                                           averaged_params_buffer=self.averaged_params_buffer,
                                           average_no=self.average_no,
+                                          average_optim = self.average_optim,
                                           output_template=self.output_template,
                                           model_inputs_template=self.model_inputs_template
                                           )
