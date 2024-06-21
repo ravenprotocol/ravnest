@@ -200,7 +200,7 @@ Here's the template for creating a unified Provider script:
 
         node = Node(name='node_<id>', ...)   # Pass appropriate parameters to define your Node, including optimizer, criterion, labels, test_labels etc.
 
-        trainer = Trainer(...)     # Pass appropriate parameters like epochs, train_loader, val_loader etc. Can also be a Custom Trainer class instance that extends Ravnest's Trainer.
+        trainer = Trainer(node=node, ...)     # Pass appropriate parameters like epochs, train_loader, val_loader etc. Can also be a Custom Trainer class instance that extends Ravnest's Trainer.
 
         trainer.train()     # Commences Training
         trainer.evaluate()  # To check accuracy of model post-training.

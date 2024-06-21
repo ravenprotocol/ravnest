@@ -10,3 +10,4 @@ packaging
 psutil
 nvidia-ml-py3
 torchinfo
+datasets
