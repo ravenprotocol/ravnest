@@ -12,7 +12,7 @@ with open('examples/sorter/sorter_data/y_train.pkl', 'rb') as fout_y:
     y_train = pickle.load(fout_y)
 
 def sorter_criterion(outputs, targets):
-    return torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+    return torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), targets[1].view(-1), ignore_index=-1)
 
 train_loader = DataLoader(list(zip(X_train,y_train)), shuffle=False, batch_size=64)
 

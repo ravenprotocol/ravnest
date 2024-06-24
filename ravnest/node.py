@@ -42,10 +42,12 @@ class Node():
     :type criterion: callable
     :param update_frequency: Frequency of model parameter updates.
     :type update_frequency: int
-    :param labels: Training labels.
-    :type labels: list or torch.Tensor
+    :param reduce_factor: Frequency at which all-reduce will be triggered i.e. trigger all-reduce every time these many updates are done.
+    :type reduce_factor: int
+    :param labels: Dataloader containing labels.
+    :type labels: torch.utils.data.DataLoader
     :param test_labels: Test labels for validation.
-    :type test_labels: list or torch.Tensor
+    :type test_labels: torch.utils.data.DataLoader
     :param device: The device on which the model will be run (CPU or GPU).
     :type device: torch.device
     :param loss_filename: The filename to save loss values.
@@ -57,7 +59,7 @@ class Node():
     """
 
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
-                 update_frequency = 1, reduce_factor=1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, average_optim=False, **kwargs):
+                 update_frequency = 1, reduce_factor=None, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, average_optim=False, **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -166,6 +168,9 @@ class Node():
         self.forward_pass_id = 0
         self.latest_backward_id = 0
         self.update_frequency = update_frequency
+        
+        if not reduce_factor:
+            reduce_factor = len(labels)
 
         self.reduce_threshold = self.update_frequency * reduce_factor
 
@@ -480,7 +485,7 @@ class Node():
                     # print('X_train: ', targets[0][0][0])
                     # print('y_train: ', targets[1])
 
-                    targets = targets[1].to(self.device)
+                    # targets = targets[1].to(self.device)
                     # targets = targets.to(self.device)    # For BERT
 
                     update_flag = False

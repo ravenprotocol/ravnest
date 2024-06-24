@@ -35,12 +35,17 @@ X, X_test, y, y_test = get_dataset()
 train_loader = DataLoader(list(zip(X,torch.tensor(y, dtype=torch.float32))), shuffle=False, batch_size=64)
 val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
 
+loss_fct = torch.nn.functional.mse_loss
+
+def loss_fn(preds, targets):
+    return loss_fct(preds, targets[1])
+
 if __name__ == '__main__':
 
     node = Node(name = 'node_0', 
                 optimizer = torch.optim.Adam,
                 device=torch.device('cpu'),
-                criterion = torch.nn.functional.mse_loss, 
+                criterion = loss_fn,
                 labels = train_loader, 
                 test_labels=val_loader
                 )

@@ -28,6 +28,7 @@ def preprocess_dataset():
     return train_loader
 
 def loss_fn(y_pred, targets):
+    targets = targets.to(torch.device('cuda'))
     labels = targets['labels']
     sentence_order_label = targets['sentence_order_label']
 
