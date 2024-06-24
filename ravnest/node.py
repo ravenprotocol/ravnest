@@ -44,7 +44,7 @@ class Node():
     :type update_frequency: int
     :param reduce_factor: Frequency at which all-reduce will be triggered i.e. trigger all-reduce every time these many updates are done.
     :type reduce_factor: int
-    :param labels: Dataloader containing labels.
+    :param labels: DataLoader containing labels. This can even be your train_loader object. Note that a batch from the labels iterator is passed as criterion method's target argument. Modify your criterion method to fetch only the required targets accordingly.
     :type labels: torch.utils.data.DataLoader
     :param test_labels: Test labels for validation.
     :type test_labels: torch.utils.data.DataLoader

@@ -194,19 +194,30 @@ Here's the template for creating a unified Provider script:
         ...
         return train_loader, val_loader
 
+    def loss_fn(predictions, targets):
+        """
+        Method that defines how loss criterion needs to be evaluated.
+        Argument targets is the next batch from the DataLoader passed as `labels` in your Node() instance.
+        Extract the appropriate target labels from it here and set device, adjust dtype etc accordingly. 
+        If your update frequency > 1, you may want to divide your final loss by the update frequency value.
+        """
+        return loss_value
+
     if __name__ == '__main__':
 
         train_loader, val_loader = preprocess_dataset()
 
-        node = Node(name='node_<id>', ...)   # Pass appropriate parameters to define your Node, including optimizer, criterion, labels, test_labels etc.
+        node = Node(name='node_<id>',   # Strictly in format: 'node_0', 'node_3', 'node_10' etc.
+                    criterion=loss_fn,  # Only the name of your defined loss_fn method without calling.
+                     ...)   # Pass other parameters to define your Node, including optimizer, labels, test_labels etc.
 
-        trainer = Trainer(node=node, ...)     # Pass appropriate parameters like epochs, train_loader, val_loader etc. Can also be a Custom Trainer class instance that extends Ravnest's Trainer.
+        trainer = Trainer(node=node, ...)     # Pass appropriate parameters like epochs, train_loader, val_loader etc. This can also be a Custom Trainer class instance that extends Ravnest's Trainer.
 
         trainer.train()     # Commences Training
         trainer.evaluate()  # To check accuracy of model post-training.
 
 .. note::
-    Please ensure that the correct ``name`` is passed to the ``Node()`` instance as a string in the format : ``'node_0'``, ``'node_7'``. Ravnest automatically determines the Provider's role based on this ``name`` parameter, so accuracy is essential.
+    Please ensure that the correct ``name`` is passed to the ``Node()`` instance as a string in the format : ``'node_0'``, ``'node_7'``. Ravnest automatically determines the Provider's role based on this ``name`` parameter, so accuracy is essential. Also, make sure you pass only the name of your ``loss_fn`` as ``criterion`` to the ``Node()`` instance without calling it.
 
 In decentralized training, it is crucial that the data order is synchronized across all nodes to maintain the integrity of the training process. Since the training loss is ultimately evaluated at the Leaf node (another type of node present at the end of the cluster), the data instances processed by the Root Provider must match those processed by the Leaf Provider. 
 
