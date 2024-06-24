@@ -154,6 +154,8 @@ def create_chunks_optim(data, size):
             if len(v.shape) < 1:
                 v = v.reshape((1,))
                 optim_param_state[k]['reshape'] = True
+            else:
+                optim_param_state[k]['reshape'] = False
             split_axis = np.argmax(v.shape)
             optim_param_state[k]['data'] = list(torch.tensor_split(v.to(torch.device('cpu')), size, split_axis))
             optim_param_state[k]['split_axis'] = split_axis
