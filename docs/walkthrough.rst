@@ -1,5 +1,5 @@
-Walkthrough: Local Decentralized Training 
-=========================================
+Walkthrough: Decentralized CNN Training 
+=======================================
 
 This section explains how you can fire up ravnest to train a simple **CNN model** on **MNIST data** across **3 nodes** that will be hosted locally on your device.
 
@@ -7,8 +7,8 @@ Before proceeding , please make sure ravnest is installed in your python environ
 
 Start off by creating a blank project directory.
 
-Configuring the Compute Nodes
------------------------------
+Configuring the Provider Nodes
+------------------------------
 
 Ravnest requires a json file that defines the available RAM (in GBs) and Network Bandwidth (in Mbps) for each participating node. 
 
@@ -41,7 +41,7 @@ In your project directory, create a json file at ``node_data/node_configs.json``
         }
     }
 
-The above code defines 3 nodes, each having 8 GB RAM each and a network bandwidth of 10 Mbps. Since we will be spawning these 3 compute nodes locally, we set different ports for each node's IP address. This is our pool of Nodes. 
+The above code defines 3 nodes, each having 8 GB RAM each and a network bandwidth of 10 Mbps. Since we will be spawning these 3 compute nodes locally, we set different ports for each node's IP address. This is our pool of Provider Nodes. 
 
 Defining the Deep Learning Model
 --------------------------------
@@ -126,6 +126,7 @@ The following logs that are generated upon executing the ``clusterize()`` method
 
 .. code-block:: text
     :linenos:
+    :emphasize-lines: 1,7,13
 
     Node(0, Cluster(0)) 
     self.IP(0.0.0.0:8080) 
@@ -145,23 +146,16 @@ The following logs that are generated upon executing the ``clusterize()`` method
     Address2Param({'0.0.0.0:8082': 'L__self___bn_3.weight'})
 
 
-Next up, you need to create the Provider scripts for Root, Stem and Leaf nodes.
+Provider Script
+---------------
 
-Provider Scripts
-----------------
+After completing the steps defined in :ref:`this<local-reference-label>` section, you will find all metadatas pertaining to each individual node in the ``node_data/nodes`` folder. In this case, you will find 3 files (``node_0.json``, ``node_1.json`` and ``node_2.json``).
 
-Even though you can easily infer the roles of each Provider nodes based on the logs of ``clusterize()`` method, an alternate technique has been mentioned for each in the aforementioned subsections:
-
-Root Node
-~~~~~~~~~
-
-After completing the steps defined in :ref:`this<local-reference-label>` section, you will find all metadatas pertaining to each individual node in the ``node_data/nodes`` folder. In this case, you will find 3 files (``node_0.json``, ``node_1.json`` and ``node_2.json``). 
-
-You can identify the root node, by finding the json file where the ``backward_target_host`` and ``backward_target_port`` keys are set to ``null`` value. The name of that json file (in this case ``node_0``) is the ``name`` that you need to provide to ``Node()`` instance in the code below (to be saved as ``client_0.py``): 
-
+Next up, you need to create the consolidated Provider script which incorporates a data preprocessing method, Node instance, and Trainer instance with the appropriate parameters:
 
 .. code-block:: python
-   :linenos:
+    :linenos:
+    :emphasize-lines: 40
 
     import numpy as np
     import torch
@@ -197,14 +191,17 @@ You can identify the root node, by finding the json file where the ``backward_ta
 
     X, X_test, y, y_test = get_dataset()
 
-    train_loader = DataLoader(list(zip(X,y)), shuffle=False, batch_size=64)
-    val_loader = DataLoader(list(zip(X_test,y_test)), shuffle=False, batch_size=64)
+    train_loader = DataLoader(list(zip(X,torch.tensor(y, dtype=torch.float32))), shuffle=False, batch_size=64)
+    val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
 
     if __name__ == '__main__':
 
         node = Node(name = 'node_0', 
                     optimizer = torch.optim.Adam,
-                    device=torch.device('cpu')
+                    device=torch.device('cpu'),
+                    criterion = torch.nn.functional.mse_loss, 
+                    labels = train_loader, 
+                    test_labels=val_loader
                     )
 
         trainer = Trainer(node=node,
@@ -219,98 +216,10 @@ You can identify the root node, by finding the json file where the ``backward_ta
 
         trainer.evaluate()
 
+Create 3 files named ``provider_0.py``, ``provider_1.py`` and ``provider_2.py`` in your project directory. Copy and paste the above code in all 3 files. 
 
-The Root Node needs to have the ``optimizer`` and ``train_loader`` defined and passed to the ``Node()`` and ``Trainer()`` class instances respectively. This Root Node is essentially the entry gateway for the training/validation data to flow into the cluster.  
+Now simply change the ``name`` passed to ``Node()`` to ``'node_0'``, ``'node_1'`` and ```node_2'`` in ``provider_0.py``, ``provider_1.py`` and ``provider_2.py`` respectively. For your convenience, this line has been highlighted in the above code snippet.
 
-
-Stem Node
-~~~~~~~~~
-
-You can identify the stem nodes by looking at the json files in ``node_data/nodes`` folder that has all 4 keys (``forward_target_host`` , ``forward_target_port``, ``backward_target_host`` and ``backward_target_port``) set to some non-null values (in our case ``node_1``). Use the following code to start your Stem Node (to be saved as ``client_1.py``):
-
-.. code-block:: python
-   :linenos:
-
-    import torch
-    import time
-    from ravnest import Node, set_seed
-
-    set_seed(42)
-
-    if __name__ == '__main__':
-            
-        node = Node(name = 'node_1',
-                    optimizer = torch.optim.Adam, 
-                    device=torch.device('cpu')
-                    )
-
-        while True:
-            time.sleep(0)
-
-
-The optimizer needs to be same as the one used for the Root Node and passed to the instance of the ``Node`` class in the above code.
-
-Leaf Node
-~~~~~~~~~
-
-You can easily identify the Leaf Node by looking at the json files in ``node_data/nodes`` folder. The file that has ``forward_target_host`` and ``forward_target_port`` set to ``null`` is the Leaf Node (in our case ``node_2``). Code for Leaf Node (to be saved as ``client_2.py``):
-
-.. code-block:: python
-   :linenos:
-
-    import torch
-    import numpy as np
-    import time
-    from sklearn import datasets
-    from torch.utils.data import DataLoader
-    from ravnest import Node, set_seed
-    from sklearn.model_selection import train_test_split
-
-    set_seed(42)
-
-    def to_categorical(x, n_col=None):
-        if not n_col:
-            n_col = np.amax(x) + 1
-        one_hot = np.zeros((x.shape[0], n_col))
-        one_hot[np.arange(x.shape[0]), x] = 1
-        return one_hot
-
-    def get_dataset():
-        data = datasets.load_digits()
-        X = data.data
-        y = data.target
-
-        # Convert to one-hot encoding
-        y = to_categorical(y.astype("int"))
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=1)
-
-        # Reshape X to (n_samples, channels, height, width)
-        X_train = X_train.reshape((-1, 1, 8, 8))
-        X_test = X_test.reshape((-1, 1, 8, 8))
-
-        return X_train, X_test, y_train, y_test
-
-    X, X_test, y, y_test = get_dataset()
-
-    train_loader = DataLoader(list(zip(X,torch.tensor(y, dtype=torch.float32))), shuffle=False, batch_size=64)
-    val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
-
-    if __name__ == '__main__':
-        
-        node = Node(name = 'node_2',
-                    optimizer = torch.optim.Adam,
-                    criterion = torch.nn.functional.mse_loss, 
-                    labels = train_loader, 
-                    test_labels=val_loader,
-                    device=torch.device('cpu')
-                    )
-        
-        while True:
-            time.sleep(0)
-
-
-The above code for the Leaf Node includes preprocessing steps for the training labels and the validation labels. Additionally, it also requires a ``criterion`` to be defined and passed to the instance of the ``Node`` class. 
 
 Project Directory Structure
 ---------------------------
@@ -320,31 +229,33 @@ If you've been diligently following along, behold the splendid sight that is you
 .. code-block:: bash
 
     .
-    ├── client_0.py
-    ├── client_1.py
-    ├── client_2.py
     ├── cluster_formation.py
     ├── models.py
-    └── node_data
-        ├── cluster_0
-        │   ├── 0.0.0.0:8080
-        │   │   ├── model_inputs.pkl
-        │   │   ├── submod.pt
-        │   │   ├── submod_0_input.pkl
-        │   │   └── submod_0_output.pkl
-        │   ├── 0.0.0.0:8081
-        │   │   ├── submod.pt
-        │   │   ├── submod_1_input.pkl
-        │   │   └── submod_1_output.pkl
-        │   └── 0.0.0.0:8082
-        │       ├── submod.pt
-        │       ├── submod_2_input.pkl
-        │       └── submod_2_output.pkl
-        ├── node_configs.json
-        └── nodes
-            ├── node_0.json
-            ├── node_1.json
-            └── node_2.json
+    ├── node_data
+    │   ├── cluster_0
+    │   │   ├── 0.0.0.0:8080
+    │   │   │   ├── model_inputs.pkl
+    │   │   │   ├── submod.pt
+    │   │   │   ├── submod_0_input.pkl
+    │   │   │   └── submod_0_output.pkl
+    │   │   ├── 0.0.0.0:8081
+    │   │   │   ├── submod.pt
+    │   │   │   ├── submod_1_input.pkl
+    │   │   │   └── submod_1_output.pkl
+    │   │   └── 0.0.0.0:8082
+    │   │       ├── submod.pt
+    │   │       ├── submod_2_input.pkl
+    │   │       └── submod_2_output.pkl
+    │   ├── node_configs.json
+    │   └── nodes
+    │       ├── node_0.json
+    │       ├── node_1.json
+    │       └── node_2.json
+    ├── provider_0.py
+    ├── provider_1.py
+    └── provider_2.py
+
+    6 directories, 19 files
 
 If everything seems to be in place, you are ready to start off your Decentralized CNN Training Session on your Local System!
 
@@ -355,15 +266,15 @@ Simply open 3 terminals with your python virtual environment enabled and run the
 
 .. code-block:: bash
     
-    python client_2.py
+    python provider_2.py
 
 .. code-block:: bash
     
-    python client_1.py
+    python provider_1.py
 
 .. code-block:: bash
     
-    python client_0.py
+    python provider_0.py
 
 Monitoring Training Metrics
 ---------------------------

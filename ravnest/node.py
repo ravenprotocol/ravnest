@@ -404,7 +404,6 @@ class Node():
                     action = ActionTypes.VAL_ACCURACY
 
                 if action == ActionTypes.ROOT_FORWARD:                    
-                    data_id = value['data_id']
                     tensors = value['data']
                     kwargs = value['kwargs']
 
@@ -426,8 +425,7 @@ class Node():
                     final_payload = {}
                     final_payload[self.submod_file] = payload
 
-                    sent_data = {'data_id':data_id,
-                                'forward_pass_id':self.forward_pass_id,
+                    sent_data = {'forward_pass_id':self.forward_pass_id,
                                 'data': final_payload,
                                 'input_size': tensors.shape[0],
                                 'action': ActionTypes.FORWARD}
@@ -454,8 +452,7 @@ class Node():
                     final_payload = data
                     final_payload[self.submod_file] = payload
 
-                    sent_data = {'data_id':value['data_id'],
-                                'forward_pass_id':forward_pass_id,
+                    sent_data = {'forward_pass_id':forward_pass_id,
                                 'data': final_payload,
                                 'input_size': value['input_size'],
                                 'action': ActionTypes.FIND_LOSS}
@@ -467,28 +464,24 @@ class Node():
 
                 elif action == ActionTypes.FIND_LOSS:
                     self.node_status = NodeStatus.FORWARD
-                    data_id = value['data_id']
                     epoch_change = False
-                    if isinstance(self.labels, torch.Tensor):
-                        targets = self.labels[data_id:data_id+value['input_size']]
-                        targets = targets.to(self.device)
-                    else:
-                        targets = next(self.labels_iterator, None)
-                        if targets is None:
-                            epoch_change = self.lr_step_on_epoch_change
-                            self.labels_iterator = iter(self.labels)
-                            targets = next(self.labels_iterator)
-                            if epoch_change:
-                                if self.lr_scheduler is not None:
-                                    self.lr_scheduler.step()
-                            print('\n ---------------------- Reset Data Iterator ------------------------')
+                    
+                    targets = next(self.labels_iterator, None)
+                    if targets is None:
+                        epoch_change = self.lr_step_on_epoch_change
+                        self.labels_iterator = iter(self.labels)
+                        targets = next(self.labels_iterator)
+                        if epoch_change:
+                            if self.lr_scheduler is not None:
+                                self.lr_scheduler.step()
+                        print('\n ---------------------- Reset Data Iterator ------------------------')
 
-                        # print('For: ', value['forward_pass_id'])
-                        # print('X_train: ', targets[0][0][0])
-                        # print('y_train: ', targets[1])
+                    # print('For: ', value['forward_pass_id'])
+                    # print('X_train: ', targets[0][0][0])
+                    # print('y_train: ', targets[1])
 
-                        targets = targets[1].to(self.device)
-                        # targets = targets.to(self.device)    # For BERT
+                    targets = targets[1].to(self.device)
+                    # targets = targets.to(self.device)    # For BERT
 
                     update_flag = False
                     if (self.n_backwards + 1) % self.update_frequency == 0:
@@ -621,20 +614,18 @@ class Node():
             self.node_status = NodeStatus.IDLE
                         
 
-    def forward_compute(self, data_id=None, tensors=None, **kwargs):
+    def forward_compute(self, tensors=None, **kwargs):
         """Initiate a forward computation request.
 
         Adds the forward computation request to the load forward buffer,
         ensuring synchronization and handling of computational resources.
 
-        :param data_id: Identifier for the data batch, defaults to None
-        :type data_id: Any, optional
         :param tensors: Input tensors for the forward computation, defaults to None
         :type tensors: torch.Tensor, optional
         :param kwargs: Additional keyword arguments for the computation, defaults to {}
         :type kwargs: dict, optional
         """
-        data = {'data':tensors, 'kwargs':kwargs, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
+        data = {'data':tensors, 'kwargs':kwargs, 'action': ActionTypes.ROOT_FORWARD}
 
 
         while self.forward_pass_id - self.latest_backward_id > self.cluster_length:
