@@ -105,6 +105,18 @@ def load_state_dict_conserve_versions(model, state_dict):
     for name, param in model.named_parameters():
         param.data = state_dict[name].data
 
+@torch.no_grad()
+def load_optim_state(optimizer, state, model):
+    id = 0
+    new_state = {}
+    for model_param_name, _ in model.named_parameters():
+        new_state[id] = state[model_param_name]
+        id += 1
+    
+    optim_state_dict = optimizer.state_dict()
+    optim_state_dict['state'] = new_state
+    optimizer.load_state_dict(optim_state_dict)
+
 def load_node_json_configs(node_name=None):
     with open('node_data/nodes/{}.json'.format(node_name)) as f:
         data = f.read()
@@ -132,6 +144,23 @@ def create_chunks(data, size):
         chunked_data[key]['split_axis'] = split_axis
 
     return chunked_data
+
+def create_chunks_optim(data, size):
+    chunked_optim_data = {}
+    for key, val in data.items():
+        optim_param_state = {}
+        for k,v in val.items():
+            optim_param_state[k] = {}
+            if len(v.shape) < 1:
+                v = v.reshape((1,))
+                optim_param_state[k]['reshape'] = True
+            else:
+                optim_param_state[k]['reshape'] = False
+            split_axis = np.argmax(v.shape)
+            optim_param_state[k]['data'] = list(torch.tensor_split(v.to(torch.device('cpu')), size, split_axis))
+            optim_param_state[k]['split_axis'] = split_axis
+        chunked_optim_data[key] = optim_param_state
+    return chunked_optim_data
 
 def compress_tensor_float16(tensor):
     if tensor.dtype == torch.float64:

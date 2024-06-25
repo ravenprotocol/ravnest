@@ -28,7 +28,7 @@ By subclassing the existing ``Trainer`` class from Ravnest, you can incorporate 
             self.prelim_checks()    # Mandatory function call at start of train() method
             '''
             Training Loop goes here.
-            Use self.node.forward_compute() to perform forward pass. Pass an incrementing data_id to this function on every call.
+            Use self.node.forward_compute() to perform forward pass. 
             Use self.node.wait_for_backwards() at end of every epoch to uphold order of respective backward passes.
             '''
             ...
@@ -38,7 +38,7 @@ As an example, here's a custom Trainer class for pre-training BERT LLM that expe
 
 .. code-block:: python
     :linenos:
-    :emphasize-lines: 3,8,10,12-15,16 
+    :emphasize-lines: 3,5,8,11-13,15 
 
     import ravnest
 
@@ -49,13 +49,10 @@ As an example, here's a custom Trainer class for pre-training BERT LLM that expe
         def train(self):
             self.prelim_checks()    # Mandatory function call
             for epoch in range(self.epochs):
-                data_id = 0
                 for batch in self.train_loader:
-                    self.node.forward_compute(data_id=data_id, 
-                                            tensors=batch['input_ids'], 
+                    self.node.forward_compute(tensors=batch['input_ids'], 
                                             l_token_type_ids_=batch['token_type_ids'], 
                                             l_attention_mask_=batch['attention_mask'])  
-                    data_id += 1    # Increments at every batch
 
                 self.node.wait_for_backwards()   # To be called at end of every epoch
                     

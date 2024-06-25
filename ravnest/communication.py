@@ -16,7 +16,7 @@ class Communication():
                  reduce_ring_buffers=None, gather_ring_buffers=None,
                  reduce_iteration=None, gather_iteration=None,
                  submod_file=None, tensor_id=None, averaged_params_buffer=None,
-                 average_no=None, output_template=None, model_inputs_template=None):
+                 average_no=None, average_optim=False, output_template=None, model_inputs_template=None):
         
         self.name = name
         self.model = model
@@ -53,6 +53,10 @@ class Communication():
 
         self.averaged_params_buffer = averaged_params_buffer
         self.average_no = average_no
+        self.average_optim = average_optim
+
+        if self.average_optim:
+            self.averaged_optim_params_buffer = {}
 
         self.output_template = output_template
         
@@ -124,8 +128,20 @@ class Communication():
             print('\nBegining Parameter Averaging')
             threads = []
             for ring_id, _ in self.ring_ids.items():
-                ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
-                t = Thread(target=self.single_ring_reduce, args=(ring_data,ring_id,))
+                # ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
+                if self.average_optim:
+                    ring_data = {}
+                    optim_state = dict(self.optimizer.state)
+                    optim_ring_data = {}
+                    for (param_name, model_param), optim_param in zip(self.model.named_parameters(), optimizer_params(self.optimizer)):
+                        if param_name in self.ring_param_keys[ring_id]:
+                            ring_data[param_name] = model_param
+                            optim_ring_data[param_name] = optim_state[optim_param]
+                else:
+                    ring_data = ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
+                    optim_ring_data = {}
+
+                t = Thread(target=self.single_ring_reduce, args=(ring_data, optim_ring_data, ring_id,))
                 threads.append(t)
                 t.start()
 
@@ -133,15 +149,20 @@ class Communication():
                 thread.join()
 
             load_state_dict_conserve_versions(self.model, self.averaged_params_buffer)
-
+            self.averaged_params_buffer = {}
             load_model_weights_into_optim(self.model, self.optimizer)
+            if self.average_optim:
+                load_optim_state(self.optimizer, self.averaged_optim_params_buffer, self.model)
+                self.averaged_optim_params_buffer = {}
             self.average_no += 1 
             print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
             # print('Averaged state_dict: ', self.model.state_dict())
 
     @torch.no_grad()
-    def single_ring_reduce(self, ring_data, ring_id):
+    def single_ring_reduce(self, ring_data, optim_ring_data, ring_id):
         chunked_data = create_chunks(data=ring_data, size=self.ring_size)
+        if self.average_optim:
+            chunked_optim_data = create_chunks_optim(data=optim_ring_data, size=self.ring_size)
         iterations = self.ring_size - 1
         recv_pos = ((self.rank-1)+self.ring_size) % self.ring_size 
         send_pos = (self.rank)%self.ring_size
@@ -152,11 +173,17 @@ class Communication():
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
+
+                optim_chunk = {}
+                if self.average_optim:
+                    for state_param, state in chunked_optim_data[id].items():
+                        optim_chunk[state_param] = state['data'][send_pos]
+
                 if dest in address_send_data_mapping:
-                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks['data'][send_pos]}
+                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks['data'][send_pos], 'optim_chunk':optim_chunk}
                 else:
-                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks['data'][send_pos]}}
-            
+                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks['data'][send_pos], 'optim_chunk':optim_chunk}}
+
             send_threads = []
             for address, data_dict in address_send_data_mapping.items():
                 t = Thread(target=self.send_reduce_chunk, args=(address.split(':')[0], address.split(':')[1], data_dict, ring_id,))
@@ -175,6 +202,9 @@ class Communication():
                         self.reduce_ring_buffers[ring_id] = received_data
                         for param_index, chunk_dict in recv_chunk.items():
                             chunked_data[param_index]['data'][chunk_dict['pos']] = chunked_data[param_index]['data'][chunk_dict['pos']].add(chunk_dict['chunk'][:])
+                            if self.average_optim:
+                                for optim_state_name, optim_state_param in chunk_dict['optim_chunk'].items():
+                                    chunked_optim_data[param_index][optim_state_name]['data'][chunk_dict['pos']] = chunked_optim_data[param_index][optim_state_name]['data'][chunk_dict['pos']].add(optim_state_param[:])
                             keys_received += 1
             
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -191,10 +221,15 @@ class Communication():
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
 
+                optim_chunk = {}
+                if self.average_optim:
+                    for state_param, state in chunked_optim_data[id].items():
+                        optim_chunk[state_param] = state['data'][send_pos]
+
                 if dest in address_send_data_mapping:
-                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks['data'][send_pos]}
+                    address_send_data_mapping[dest][id] = {'pos':send_pos, 'chunk':chunks['data'][send_pos], 'optim_chunk':optim_chunk}
                 else:
-                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks['data'][send_pos]}}
+                    address_send_data_mapping[dest] = {id:{'pos':send_pos, 'chunk': chunks['data'][send_pos], 'optim_chunk':optim_chunk}}
 
             send_threads = []
             for address, data_dict in address_send_data_mapping.items():
@@ -215,6 +250,11 @@ class Communication():
                         
                         for param_index, chunk_dict in recv_chunk.items():
                             chunked_data[param_index]['data'][chunk_dict['pos']].data = chunk_dict['chunk'].data[:]
+
+                            if self.average_optim:
+                                for optim_state_name, optim_state_param in chunk_dict['optim_chunk'].items():
+                                    chunked_optim_data[param_index][optim_state_name]['data'][chunk_dict['pos']].data = optim_state_param.data[:]
+
                             keys_received += 1
 
             recv_pos = ((recv_pos - 1)+self.ring_size)%self.ring_size
@@ -225,9 +265,17 @@ class Communication():
 
         for param, chunk in chunked_data.items():
             chunked_data[param] = torch.cat(chunk['data'], dim=chunk['split_axis']).div(self.ring_size).to(self.device)
+            if self.average_optim:
+                for state_param, state in chunked_optim_data[param].items():
+                    reduced_tensor = torch.cat(state['data'], dim=state['split_axis']).div(self.ring_size)
+                    if state['reshape']:
+                        reduced_tensor = reduced_tensor.reshape(())
+                    chunked_optim_data[param][state_param] = reduced_tensor.to(self.device)#torch.cat(state['data'], dim=state['split_axis']).div(self.ring_size).to(self.device)
 
         print('Gathered Ring id: ', ring_id)
         self.averaged_params_buffer.update(chunked_data)
+        if self.average_optim:
+            self.averaged_optim_params_buffer.update(chunked_optim_data)
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:

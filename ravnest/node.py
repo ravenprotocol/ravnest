@@ -24,7 +24,7 @@ class Node():
     """
     Responsible for managing the computational and communication aspects of a distributed machine learning model, including model initialization, parameter synchronization, forward and backward passes, loss computation, and communication between different nodes in the system.
     
-    :param name: The name of the node.
+    :param name: The name of the node. Strictly in the format: 'node_0', 'node_17' etc.
     :type name: str
     :param model: The PyTorch model associated with the node.
     :type model: torch.nn.Module
@@ -42,10 +42,14 @@ class Node():
     :type criterion: callable
     :param update_frequency: Frequency of model parameter updates.
     :type update_frequency: int
-    :param labels: Training labels.
-    :type labels: list or torch.Tensor
+    :param reduce_factor: Frequency at which all-reduce will be triggered i.e. trigger all-reduce every time these many updates are done.
+    :type reduce_factor: int
+    :param average_optim: Set to True for enabling optimizer parameter averaging across clusters. 
+    :type average_optim: bool
+    :param labels: DataLoader containing labels. This can even be your train_loader object. Note that a batch from the labels iterator is passed as criterion method's target argument. Modify your criterion method to fetch only the required targets accordingly.
+    :type labels: torch.utils.data.DataLoader
     :param test_labels: Test labels for validation.
-    :type test_labels: list or torch.Tensor
+    :type test_labels: torch.utils.data.DataLoader
     :param device: The device on which the model will be run (CPU or GPU).
     :type device: torch.device
     :param loss_filename: The filename to save loss values.
@@ -57,7 +61,7 @@ class Node():
     """
 
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, lr_scheduler=None, lr_scheduler_params={}, lr_step_on_epoch_change=True, criterion=None, 
-                 update_frequency = 1, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, **kwargs):
+                 update_frequency = 1, reduce_factor=None, labels=None, test_labels=None, device = torch.device('cpu'), loss_filename='losses.txt', compression=False, average_optim=False, **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -166,8 +170,11 @@ class Node():
         self.forward_pass_id = 0
         self.latest_backward_id = 0
         self.update_frequency = update_frequency
+        
+        if not reduce_factor:
+            reduce_factor = len(labels)
 
-        self.reduce_threshold = self.update_frequency * 3
+        self.reduce_threshold = self.update_frequency * reduce_factor
 
         self.submod_file = kwargs.get('submod_file', None)
         self.node_status = NodeStatus.IDLE
@@ -175,6 +182,7 @@ class Node():
 
         self.averaged_params_buffer = {}
         self.average_no = 0
+        self.average_optim = average_optim
 
         self.cluster_length = kwargs['cluster_length']
 
@@ -234,6 +242,7 @@ class Node():
                                           tensor_id=self.tensor_id, 
                                           averaged_params_buffer=self.averaged_params_buffer,
                                           average_no=self.average_no,
+                                          average_optim = self.average_optim,
                                           output_template=self.output_template,
                                           model_inputs_template=self.model_inputs_template
                                           )
@@ -402,7 +411,6 @@ class Node():
                     action = ActionTypes.VAL_ACCURACY
 
                 if action == ActionTypes.ROOT_FORWARD:                    
-                    data_id = value['data_id']
                     tensors = value['data']
                     kwargs = value['kwargs']
 
@@ -424,8 +432,7 @@ class Node():
                     final_payload = {}
                     final_payload[self.submod_file] = payload
 
-                    sent_data = {'data_id':data_id,
-                                'forward_pass_id':self.forward_pass_id,
+                    sent_data = {'forward_pass_id':self.forward_pass_id,
                                 'data': final_payload,
                                 'input_size': tensors.shape[0],
                                 'action': ActionTypes.FORWARD}
@@ -452,8 +459,7 @@ class Node():
                     final_payload = data
                     final_payload[self.submod_file] = payload
 
-                    sent_data = {'data_id':value['data_id'],
-                                'forward_pass_id':forward_pass_id,
+                    sent_data = {'forward_pass_id':forward_pass_id,
                                 'data': final_payload,
                                 'input_size': value['input_size'],
                                 'action': ActionTypes.FIND_LOSS}
@@ -465,28 +471,24 @@ class Node():
 
                 elif action == ActionTypes.FIND_LOSS:
                     self.node_status = NodeStatus.FORWARD
-                    data_id = value['data_id']
                     epoch_change = False
-                    if isinstance(self.labels, torch.Tensor):
-                        targets = self.labels[data_id:data_id+value['input_size']]
-                        targets = targets.to(self.device)
-                    else:
-                        targets = next(self.labels_iterator, None)
-                        if targets is None:
-                            epoch_change = self.lr_step_on_epoch_change
-                            self.labels_iterator = iter(self.labels)
-                            targets = next(self.labels_iterator)
-                            if epoch_change:
-                                if self.lr_scheduler is not None:
-                                    self.lr_scheduler.step()
-                            print('\n ---------------------- Reset Data Iterator ------------------------')
+                    
+                    targets = next(self.labels_iterator, None)
+                    if targets is None:
+                        epoch_change = self.lr_step_on_epoch_change
+                        self.labels_iterator = iter(self.labels)
+                        targets = next(self.labels_iterator)
+                        if epoch_change:
+                            if self.lr_scheduler is not None:
+                                self.lr_scheduler.step()
+                        print('\n ---------------------- Reset Data Iterator ------------------------')
 
-                        # print('For: ', value['forward_pass_id'])
-                        # print('X_train: ', targets[0][0][0])
-                        # print('y_train: ', targets[1])
+                    # print('For: ', value['forward_pass_id'])
+                    # print('X_train: ', targets[0][0][0])
+                    # print('y_train: ', targets[1])
 
-                        targets = targets[1].to(self.device)
-                        # targets = targets.to(self.device)    # For BERT
+                    # targets = targets[1].to(self.device)
+                    # targets = targets.to(self.device)    # For BERT
 
                     update_flag = False
                     if (self.n_backwards + 1) % self.update_frequency == 0:
@@ -619,20 +621,18 @@ class Node():
             self.node_status = NodeStatus.IDLE
                         
 
-    def forward_compute(self, data_id=None, tensors=None, **kwargs):
+    def forward_compute(self, tensors=None, **kwargs):
         """Initiate a forward computation request.
 
         Adds the forward computation request to the load forward buffer,
         ensuring synchronization and handling of computational resources.
 
-        :param data_id: Identifier for the data batch, defaults to None
-        :type data_id: Any, optional
         :param tensors: Input tensors for the forward computation, defaults to None
         :type tensors: torch.Tensor, optional
         :param kwargs: Additional keyword arguments for the computation, defaults to {}
         :type kwargs: dict, optional
         """
-        data = {'data':tensors, 'kwargs':kwargs, 'data_id':data_id, 'action': ActionTypes.ROOT_FORWARD}
+        data = {'data':tensors, 'kwargs':kwargs, 'action': ActionTypes.ROOT_FORWARD}
 
 
         while self.forward_pass_id - self.latest_backward_id > self.cluster_length:

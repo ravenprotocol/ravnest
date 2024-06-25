@@ -155,7 +155,7 @@ Next up, you need to create the consolidated Provider script which incorporates 
 
 .. code-block:: python
     :linenos:
-    :emphasize-lines: 40
+    :emphasize-lines: 46
 
     import numpy as np
     import torch
@@ -173,7 +173,7 @@ Next up, you need to create the consolidated Provider script which incorporates 
         one_hot[np.arange(x.shape[0]), x] = 1
         return one_hot
 
-    def get_dataset():
+    def preprocess_dataset():
         data = datasets.load_digits()
         X = data.data
         y = data.target
@@ -187,19 +187,25 @@ Next up, you need to create the consolidated Provider script which incorporates 
         X_train = X_train.reshape((-1, 1, 8, 8))
         X_test = X_test.reshape((-1, 1, 8, 8))
 
-        return X_train, X_test, y_train, y_test
+        generator = torch.Generator()
+        generator.manual_seed(42)
 
-    X, X_test, y, y_test = get_dataset()
+        train_loader = DataLoader(list(zip(X_train,torch.tensor(y_train, dtype=torch.float32))), generator=generator, shuffle=True, batch_size=64)
+        val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
 
-    train_loader = DataLoader(list(zip(X,torch.tensor(y, dtype=torch.float32))), shuffle=False, batch_size=64)
-    val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
+        return train_loader, val_loader
+
+    def loss_fn(preds, targets):
+        return torch.nn.functional.mse_loss(preds, targets[1])
 
     if __name__ == '__main__':
+
+        train_loader, val_loader = preprocess_dataset()
 
         node = Node(name = 'node_0', 
                     optimizer = torch.optim.Adam,
                     device=torch.device('cpu'),
-                    criterion = torch.nn.functional.mse_loss, 
+                    criterion = loss_fn,
                     labels = train_loader, 
                     test_labels=val_loader
                     )
@@ -218,7 +224,7 @@ Next up, you need to create the consolidated Provider script which incorporates 
 
 Create 3 files named ``provider_0.py``, ``provider_1.py`` and ``provider_2.py`` in your project directory. Copy and paste the above code in all 3 files. 
 
-Now simply change the ``name`` passed to ``Node()`` to ``'node_0'``, ``'node_1'`` and ```node_2'`` in ``provider_0.py``, ``provider_1.py`` and ``provider_2.py`` respectively. For your convenience, this line has been highlighted in the above code snippet.
+Now simply change the ``name`` passed to ``Node()`` (highlighted line) to ``'node_0'``, ``'node_1'`` and ```node_2'`` in ``provider_0.py``, ``provider_1.py`` and ``provider_2.py`` respectively. For your convenience, this line has been highlighted in the above code snippet.
 
 
 Project Directory Structure

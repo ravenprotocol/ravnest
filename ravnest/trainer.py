@@ -67,23 +67,21 @@ class Trainer():
         t1 = time.time()
         self.n_forwards = 0
         for epoch in range(self.epochs):
-            data_id = 0
             for X_train, y_train in self.train_loader:
                 if torch.is_tensor(X_train):
                     if self.inputs_dtype is not None:
                         if X_train.dtype == self.inputs_dtype:
-                            self.node.forward_compute(data_id=data_id, tensors=X_train)
+                            self.node.forward_compute(tensors=X_train)
                         else:
-                            self.node.forward_compute(data_id=data_id, tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
+                            self.node.forward_compute(tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
                     else:
-                        self.node.forward_compute(data_id=data_id, tensors=X_train)
+                        self.node.forward_compute(tensors=X_train)
                 else:
                     if X_train.dtype == self.inputs_dtype:
-                        self.node.forward_compute(data_id=data_id, tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
+                        self.node.forward_compute(tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
                     else:
-                        self.node.forward_compute(data_id=data_id, tensors=torch.tensor(X_train.numpy()))
+                        self.node.forward_compute(tensors=torch.tensor(X_train.numpy()))
                 self.n_forwards += 1                
-                data_id += (self.batch_size // self.step_size)
             
             if self.val_loader is not None: 
                 # if self.n_forwards % self.val_freq == 0:

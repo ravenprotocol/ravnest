@@ -43,12 +43,18 @@ def get_dataset(root=None):
 
 train_loader, val_loader = get_dataset(root='./tiny-imagenet-200')
 
+loss_fct = torch.nn.CrossEntropyLoss()
+
+def loss_fn(preds, targets):
+    targets = targets[1].to(torch.device('cuda'))
+    return loss_fct(preds, targets)
+
 if __name__ == '__main__':
 
     node = Node(name = 'node_0',
                 optimizer = torch.optim.SGD,
                 optimizer_params = {'lr':0.01, 'momentum':0.9, 'weight_decay':0.0005},
-                criterion = torch.nn.CrossEntropyLoss(), 
+                criterion = loss_fn,
                 labels = train_loader,
                 test_labels = val_loader,
                 device=torch.device('cuda')
