@@ -1,6 +1,15 @@
-# Ravnest
+<div align="center">
+      <h1> Ravnest </h1>
+</div>
+
+[![Documentation Status](https://readthedocs.org/projects/ravnest/badge/?version=latest&style=flat-square)](http://ravnest.readthedocs.io)
 
 Ravnest introduces a novel asynchronous parallel training approach that combines the best aspects of data and model parallelism. This method enables the distributed training of complex deep learning models across large datasets, utilizing clusters of heterogeneous consumer-grade PCs connected via the internet. Designed with scalability and performance as key objectives, Ravnest seeks to empower researchers and machine learning practitioners. It simplifies the development and deployment of deep learning models, paving the way for innovative research and practical real-world applications.
+
+**Documentation**: https://ravnest.readthedocs.io/
+
+**Research Paper**: https://arxiv.org/abs/2401.01728
+
 
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 
@@ -25,15 +34,20 @@ python cluster_formation.py
 > **_NOTE:_**  Uncomment the correct lines in ```cluster_formation.py``` for CNN/ResNet-50/Inception-V3/GPT-Sorter/BERT models.
 
 Execution of Clients (in 3 terminals) for CNN:
+
+Create 3 copies of the ``provider.py`` file inside ``examples/cnn/`` folder. Rename these files as ``provider_0.py``, ``provider_1.py`` and ``provider_2.py``. In each of these files, set the ``name`` parameter of ``Node()`` object to ``'node_0'``, ``'node_1'`` and ``'node_2'``.
+
 ```bash
-python examples/cnn/cnn_client_0.py
+python examples/cnn/provider_0.py
 ```
 ```bash
-python examples/cnn/cnn_client_1.py
+python examples/cnn/provider_1.py
 ```
 ```bash
-python examples/cnn/cnn_client_2.py
+python examples/cnn/provider_2.py
 ```
+
+> **_NOTE:_** If you have installed Ravnest via Pip, you will have to delete the entire ``ravnest`` subfolder in your cloned directory so that your scripts utilize methods and classes pointing to the pip installed library.
 
 ![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png)
 
@@ -50,5 +64,3 @@ If you have found Ravnest or its foundational components and algorithms to be be
       primaryClass={cs.LG}
 }
 ```
-
-Research Paper link: https://arxiv.org/abs/2401.01728

@@ -24,7 +24,7 @@ class Node():
     """
     Responsible for managing the computational and communication aspects of a distributed machine learning model, including model initialization, parameter synchronization, forward and backward passes, loss computation, and communication between different nodes in the system.
     
-    :param name: The name of the node.
+    :param name: The name of the node. Strictly in the format: 'node_0', 'node_17' etc.
     :type name: str
     :param model: The PyTorch model associated with the node.
     :type model: torch.nn.Module
@@ -44,6 +44,8 @@ class Node():
     :type update_frequency: int
     :param reduce_factor: Frequency at which all-reduce will be triggered i.e. trigger all-reduce every time these many updates are done.
     :type reduce_factor: int
+    :param average_optim: Set to True for enabling optimizer parameter averaging across clusters. 
+    :type average_optim: bool
     :param labels: DataLoader containing labels. This can even be your train_loader object. Note that a batch from the labels iterator is passed as criterion method's target argument. Modify your criterion method to fetch only the required targets accordingly.
     :type labels: torch.utils.data.DataLoader
     :param test_labels: Test labels for validation.
