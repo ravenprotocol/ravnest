@@ -2,11 +2,11 @@
       <h1> Ravnest </h1>
 </div>
 
-[![Documentation Status](https://readthedocs.org/projects/ravnest/badge/?version=latest&style=flat-square)](http://ravnest.readthedocs.io)
+[![Documentation Status](https://readthedocs.org/projects/ravnest/badge/?version=latest&style=for-the-badge)](http://ravnest.readthedocs.io)
 
 Ravnest introduces a novel asynchronous parallel training approach that combines the best aspects of data and model parallelism. This method enables the distributed training of complex deep learning models across large datasets, utilizing clusters of heterogeneous consumer-grade PCs connected via the internet. Designed with scalability and performance as key objectives, Ravnest seeks to empower researchers and machine learning practitioners. It simplifies the development and deployment of deep learning models, paving the way for innovative research and practical real-world applications.
 
-**Documentation**: https://ravnest.readthedocs.io/
+**Documentation**: https://ravnest.readthedocs.io
 
 **Research Paper**: https://arxiv.org/abs/2401.01728
 
