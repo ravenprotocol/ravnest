@@ -55,12 +55,19 @@ class Compute():
         self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
 
         if len(kwargs) > 0:
-            self.input_tensors[forward_pass_id] = {'tensors': tensors, 'kwargs':kwargs}
+            if tensors is not None:
+                self.input_tensors[forward_pass_id] = {'tensors': tensors, 'kwargs':kwargs}
+            else:
+                self.input_tensors[forward_pass_id] = {'kwargs':kwargs}
+
         else:
             self.input_tensors[forward_pass_id] = tensors
 
         with torch.no_grad():
-            output = self.model(tensors, **kwargs)
+            if tensors is not None:
+                output = self.model(tensors, **kwargs)
+            else:
+                output = self.model(**kwargs)
 
         if self.version_to_fpid.get(self.current_version, None) is not None:
             self.version_to_fpid[self.current_version].append(forward_pass_id)
@@ -212,7 +219,10 @@ class Compute():
 
             if self.node_type == NodeTypes.ROOT:
                 if isinstance(self.input_tensors[forward_pass_id], dict):
-                    output = self.model(self.input_tensors[forward_pass_id]['tensors'], **self.input_tensors[forward_pass_id]['kwargs'])
+                    if 'tensors' in self.input_tensors[forward_pass_id].keys():
+                        output = self.model(self.input_tensors[forward_pass_id]['tensors'], **self.input_tensors[forward_pass_id]['kwargs'])
+                    else:
+                        output = self.model(**self.input_tensors[forward_pass_id]['kwargs'])
                 else:
                     output = self.model(self.input_tensors[forward_pass_id])
             else:

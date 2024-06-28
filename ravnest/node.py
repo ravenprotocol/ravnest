@@ -44,9 +44,7 @@ class Node():
     :type update_frequency: int
     :param reduce_factor: Frequency at which all-reduce will be triggered i.e. trigger all-reduce every time these many updates are done.
     :type reduce_factor: int
-    :param average_optim: Set to True for enabling optimizer parameter averaging across clusters. 
-    :type average_optim: bool
-    :param labels: DataLoader containing labels. This can even be your train_loader object. Note that a batch from the labels iterator is passed as criterion method's target argument. Modify your criterion method to fetch only the required targets accordingly.
+    :param labels: Dataloader containing labels.
     :type labels: torch.utils.data.DataLoader
     :param test_labels: Test labels for validation.
     :type test_labels: torch.utils.data.DataLoader
@@ -415,16 +413,21 @@ class Node():
                     tensors = value['data']
                     kwargs = value['kwargs']
 
-                    tensors = tensors.to(self.device)
+                    if tensors is not None:
+                        tensors = tensors.to(self.device)
+
+                    modified_kwargs = {}
                     for kwarg_key, kwarg_val in kwargs.items():
                         if isinstance(kwarg_val, torch.Tensor):
-                            kwargs[kwarg_key] = kwarg_val.to(self.device)
+                            modified_kwargs['l_'+kwarg_key+'_'] = kwarg_val.to(self.device)
+                        else:
+                            modified_kwargs['l_'+kwarg_key+'_'] = kwarg_val
 
                     self.node_status = NodeStatus.FORWARD
 
                     print('Before Root Forward: ')
                     check_gpu_usage()
-                    output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **kwargs)
+                    output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **modified_kwargs)
                     print('After Root Forward: ')
                     check_gpu_usage()
 
@@ -435,7 +438,6 @@ class Node():
 
                     sent_data = {'forward_pass_id':self.forward_pass_id,
                                 'data': final_payload,
-                                'input_size': tensors.shape[0],
                                 'action': ActionTypes.FORWARD}
                     
                     print('Forward compute done for: ', self.forward_pass_id)
@@ -462,7 +464,6 @@ class Node():
 
                     sent_data = {'forward_pass_id':forward_pass_id,
                                 'data': final_payload,
-                                'input_size': value['input_size'],
                                 'action': ActionTypes.FIND_LOSS}
                     t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
                     send_trigger_threads.append(t)
