@@ -72,6 +72,7 @@ class Node():
         kwargs.update(node_metadata)
 
         self.node_type = kwargs.get('node_type', None)
+        self.template_path = kwargs.get('template_path', None)[:-1]
         self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
         self.name = name
         self.loss_filename = loss_filename
@@ -608,7 +609,8 @@ class Node():
 
                 elif action == ActionTypes.SAVE_SUBMODEL:
                     script = torch.jit.script(self.model)
-                    script.save('trained_submodels/{}.pt'.format(self.submod_file))
+                    script.save('{}/{}.pt'.format(self.template_path, self.submod_file))
+                    os.remove('{}/submod.pt'.format(self.template_path))
                     if self.node_type != NodeTypes.LEAF:
                         t = Thread(target=self.comm_session.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
                         send_trigger_threads.append(t)
@@ -699,8 +701,9 @@ class Node():
 
         """
         script = torch.jit.script(self.model)
-        os.makedirs('trained_submodels', exist_ok=True)
-        script.save('trained_submodels/{}.pt'.format(self.submod_file))
+        os.makedirs(self.template_path, exist_ok=True)
+        script.save('{}/{}.pt'.format(self.template_path,self.submod_file))
+        os.remove('{}/submod.pt'.format(self.template_path))
         self.comm_session.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('SAVE done')
 
@@ -713,7 +716,8 @@ class Node():
         """
         if os.path.exists('{}_aux'.format(self.name)):
             shutil.rmtree('{}_aux'.format(self.name))
-        os.makedirs('{}_aux'.format(self.name), exist_ok=True)
+        if os.path.exists('trained'):
+            shutil.rmtree('trained')
         if os.path.exists(self.loss_filename):
             os.remove(self.loss_filename)
         if os.path.exists('val_accuracies.txt'):

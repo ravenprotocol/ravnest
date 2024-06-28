@@ -216,7 +216,8 @@ Next up, you need to create the consolidated Provider script which incorporates 
                         val_freq=64,
                         epochs=100,
                         batch_size=64,
-                        inputs_dtype=torch.float32)
+                        inputs_dtype=torch.float32,
+                        save=True)
 
         trainer.train()
 
@@ -286,3 +287,20 @@ Monitoring Training Metrics
 ---------------------------
 
 As training progresses, you can view the training losses in a ``losses.txt`` file that automatically gets created in your project directory. Additionally, you may also find a file named ``val_accuracies.txt`` that periodically logs the validation accuracy.
+
+Retrieving Trained Final Model
+------------------------------
+
+Setting the ``save`` parameter of ``Trainer()`` instance to ``True`` in the Provider's script enables saving of corresponding submodels post-training. You can now combine these submodels across any cluster and have a complete cohesive state_dict that contains the trained weights and parameters. 
+
+Run the following code to save this consolidated state_dict at ``trained/trained_state_dict.pt``:
+
+.. code-block:: python
+ 
+    import ravnest
+
+    ravnest.model_fusion(cluster_id=0)
+
+Adjust the ``cluster_id`` parameter to retrieve and save the trained state_dict for the respective cluster. 
+
+With the consolidated state_dict from your decentralized training session, you can load it into your main PyTorch model using ``model.load_state_dict('trained/trained_state_dict.pt')``. You can run inference, deploy this trained model, or use it for any other purpose!
