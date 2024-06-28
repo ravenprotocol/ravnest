@@ -200,3 +200,25 @@ def check_gpu_usage():
             print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, round(info.total * 1e-9, 2), round(info.free * 1e-9, 2), round(info.used * 1e-9, 2)))
                 
         nvidia_smi.nvmlShutdown()
+
+def model_fusion(folder_path = 'trained_submodels'):
+    """Fuses state dictionaries from TorchScript submodels (.pt files) located in the specified folder. The combined state dictionary is then saved as 'trained_state_dict.pt' in the same folder. This final state_dict can then be loaded into the main model using ``model.load_state_dict()`` for obtaining the final trained main model. Note that a provider's submodel will get saved post decentralized training in 'trained_submodels' folder by default if ``save`` parameter of ``Trainer()`` instance is set to True. 
+
+
+    :param folder_path: Name of folder containing all the saved TorchScript submodels post-training, defaults to 'trained_submodels'
+    :type folder_path: str, optional
+    """
+    if os.path.exists(folder_path):
+        pt_files = [f for f in os.listdir(folder_path) if f.endswith('.pt') and f.startswith('submod')]
+        if len(pt_files) > 0:
+            combined_state_dict = {}
+            for file in pt_files:
+                file_path = os.path.join(folder_path, file)
+                submod = torch.jit.load(file_path)
+                submod_state_dict = {key.replace('L__self___', ''): value for key, value in submod.state_dict().items()}
+                combined_state_dict.update(submod_state_dict)
+            torch.save(combined_state_dict, '{}/trained_state_dict.pt'.format(folder_path))
+        else:
+            print('{} path has no submodels'.format(folder_path))
+    else:
+        print('Submodels not found!')
