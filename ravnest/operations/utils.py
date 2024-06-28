@@ -405,6 +405,11 @@ def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False)
         for k,v in example_kwargs.items():
             input_data[k] = v    
         full_model_size = get_memory_reqs(model=model, input_data=input_data)
+    elif len(example_args) == 0 and len(example_kwargs) != 0:
+        input_data = {}
+        for k,v in example_kwargs.items():
+            input_data[k] = v    
+        full_model_size = get_memory_reqs(model=model, input_data=input_data)
 
     node_pool, total_ram = spawn_node_pool(mode='load_from_configs')
     assert total_ram > full_model_size
