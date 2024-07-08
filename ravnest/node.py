@@ -63,6 +63,7 @@ class Node():
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
+        self.latest_weights_lock = mp.Lock()
         self.reduce_lock = mp.Lock()
         self.gather_lock = mp.Lock()
 
@@ -92,8 +93,10 @@ class Node():
         self.load_backward_buffer = self.manager.list()
         self.reduce_ring_buffers = self.manager.dict()
         self.gather_ring_buffers = self.manager.dict()
+        self.latest_weights_buffer = self.manager.dict()
         self.reduce_iteration = self.manager.dict()
         self.gather_iteration = self.manager.dict()
+
 
         self.start_server_flag = self.manager.Value(bool, False)
 
@@ -209,8 +212,8 @@ class Node():
 
         self.compute_session = Compute(model = self.model, optimizer = self.optimizer, 
                                         criterion=self.criterion, compression=self.compression,
-                                        input_tensors = self.input_tensors, 
-                                        tensor_id = self.tensor_id, output_template = self.output_template, 
+                                        input_tensors = self.input_tensors, latest_weights_buffer = self.latest_weights_buffer,
+                                        latest_weights_lock=self.latest_weights_lock, tensor_id = self.tensor_id, output_template = self.output_template, 
                                         input_template = self.input_template, node_type=self.node_type,
                                         submod_file=self.submod_file, loss_filename=self.loss_filename, device = self.device)
 
@@ -249,9 +252,9 @@ class Node():
         self.start()
 
     def init_server(self, load_forward_buffer=None, load_backward_buffer=None, 
-                    reduce_ring_buffers = None, gather_ring_buffers = None, 
+                    reduce_ring_buffers = None, gather_ring_buffers = None, latest_weights_buffer=None, 
                     forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None,
-                    reduce_iteration = None, gather_iteration = None):
+                    latest_weights_lock=None, reduce_iteration = None, gather_iteration = None):
         """Initialize the gRPC server for handling communication with other nodes.
 
         :param load_forward_buffer: Shared buffer for incoming forward pass data, defaults to None
@@ -278,8 +281,10 @@ class Node():
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         add_CommServerServicer_to_server(GrpcService(
             load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, 
-            reduce_ring_buffers=reduce_ring_buffers, gather_ring_buffers=gather_ring_buffers,
-            forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, gather_lock=gather_lock,
+            reduce_ring_buffers=reduce_ring_buffers, gather_ring_buffers=gather_ring_buffers, 
+            latest_weights_buffer=latest_weights_buffer,
+            forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, 
+            gather_lock=gather_lock,latest_weights_lock=latest_weights_lock,
             reduce_iteration = reduce_iteration, gather_iteration = gather_iteration), self.server)
         print('Length of forward buffer: ', len(load_backward_buffer), os.getpid())
 
@@ -389,6 +394,10 @@ class Node():
                         self.comm_session.parallel_ring_reduce()
                         # self.compute_session.current_version += 1
                         self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
+
+                        self.latest_weights_lock.acquire(block=True)
+                        self.latest_weights_buffer['state_dict'] = self.compute_session.version_to_param[self.compute_session.current_version]
+                        self.latest_weights_lock.release()
 
                         # print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
 
@@ -731,9 +740,11 @@ class Node():
             backward_lock = self.backward_lock,
             reduce_lock = self.reduce_lock,
             gather_lock = self.gather_lock,
+            latest_weights_lock = self.latest_weights_lock,
             local_address = self.local_address,
             load_forward_buffer = self.load_forward_buffer,
             load_backward_buffer = self.load_backward_buffer,
+            latest_weights_buffer = self.latest_weights_buffer,
             reduce_ring_buffers = self.reduce_ring_buffers,
             gather_ring_buffers = self.gather_ring_buffers,
             reduce_iteration = self.reduce_iteration,
@@ -748,10 +759,12 @@ class Node():
                          load_backward_buffer=state['load_backward_buffer'], 
                          reduce_ring_buffers= state['reduce_ring_buffers'],
                          gather_ring_buffers= state['gather_ring_buffers'],
+                         latest_weights_buffer=state['latest_weights_buffer'],
                          forward_lock=state['forward_lock'], 
                          backward_lock=state['backward_lock'],
                          reduce_lock=state['reduce_lock'],
                          gather_lock=state['gather_lock'],
+                         latest_weights_lock = state['latest_weights_lock'],
                          reduce_iteration = state['reduce_iteration'],
                          gather_iteration = state['gather_iteration']
                          )

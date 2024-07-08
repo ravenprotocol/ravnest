@@ -1,20 +1,23 @@
 from .protos.server_pb2_grpc import CommServer
-from .protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk, CheckReduceIteration, CheckGatherIteration, ReduceIterationReply, GatherIterationReply
+from .protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk, CheckReduceIteration, CheckGatherIteration, ReduceIterationReply, GatherIterationReply, SendLatestWeights, WeightsChunk
 from .protos.tensor_pb2 import SendTensor, SendTensorReply
+from utils import generate_weights_stream
 
 import _pickle as cPickle
 
 class GrpcService(CommServer):
     def __init__(self, load_forward_buffer=None, 
-                 load_backward_buffer=None, 
+                 load_backward_buffer=None, latest_weights_buffer=None,
                  forward_lock=None, backward_lock=None, 
                  reduce_ring_buffers = None, gather_ring_buffers=None,
-                 reduce_lock=None, gather_lock=None, 
+                 reduce_lock=None, gather_lock=None, latest_weights_lock=None,
                  reduce_iteration = None, gather_iteration = None
                  ):
         super().__init__()
         self.load_forward_buffer = load_forward_buffer
         self.load_backward_buffer = load_backward_buffer
+        self.latest_weights_buffer = latest_weights_buffer
+        self.latest_weights_lock = latest_weights_lock
         self.forward_lock = forward_lock
         self.backward_lock = backward_lock
         self.reduce_lock = reduce_lock
@@ -135,3 +138,13 @@ class GrpcService(CommServer):
                 self.gather_ring_buffers[ring_id] = [data]
 
         return ReceivedChunk(reply=True)
+    
+    def get_latest_weights(self, request:SendLatestWeights, context) -> WeightsChunk:
+        param_names = cPickle.loads(request.param_names)
+        with self.latest_weights_lock.acquire():
+            latest_state_dict = self.latest_weights_buffer['state_dict']
+            state_dict_keys = list(latest_state_dict.keys())
+            key_start_index = state_dict_keys.index(param_names[0])
+            key_end_index = state_dict_keys.index(param_names[1])    
+            send_dict = {k:latest_state_dict[k] for k in state_dict_keys[key_start_index:key_end_index+1]}
+        generate_weights_stream(send_dict)
