@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import torch
 import asyncio
@@ -200,3 +201,37 @@ def check_gpu_usage():
             print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, round(info.total * 1e-9, 2), round(info.free * 1e-9, 2), round(info.used * 1e-9, 2)))
                 
         nvidia_smi.nvmlShutdown()
+
+
+def find_files_with_extension(root_folder, extension):
+    file_paths = []
+    for folder, _, files in os.walk(root_folder):
+        matching_files = glob.glob(os.path.join(folder, f"submod*.{extension}"))
+        file_paths.extend(matching_files)
+    
+    return file_paths
+
+def model_fusion(cluster_id = 0):
+    """Fuses state dictionaries from TorchScript submodels (.pt files) hosted on all Providers belonging to a cluster. The combined state dictionary is then saved at 'trained/trained_state_dict.pt'. This final state_dict can then be loaded into the main model using ``model.load_state_dict()`` for obtaining the final trained main model. 
+    
+    Make sure to set the ``save`` parameter of ``Trainer()`` instance to ``True`` for saving submodels post-training. Only then this method to work.
+
+    :param cluster_id: ID of the cluster whose submodels need to be combined into the main model, defaults to 0
+    :type cluster_id: int, optional
+    """
+    folder_path = 'node_data/cluster_{}'.format(cluster_id)
+    if os.path.exists(folder_path):
+        pt_files = find_files_with_extension(root_folder=folder_path, extension='pt')
+        if len(pt_files) > 0:
+            combined_state_dict = {}
+            for file in pt_files:
+                submod = torch.jit.load(file)
+                submod_state_dict = {key.replace('L__self___', ''): value for key, value in submod.state_dict().items()}
+                combined_state_dict.update(submod_state_dict)
+            os.makedirs('trained', exist_ok=True)
+            save_path = 'trained/trained_state_dict.pt'
+            torch.save(combined_state_dict, save_path)
+        else:
+            print('{} path has no submodels'.format(folder_path))
+    else:
+        print('Submodels not found!')

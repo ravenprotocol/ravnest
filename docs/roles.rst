@@ -74,7 +74,9 @@ In the backward pass, the gradient information needed for updating the model par
 Intermediary Server
 -------------------
 
+.. note::
+    The Intermediary Server is an upcoming integration to the Ravnest ecosystem. For now, the node configs and provider scripts must be set up manually on the participating systems.
+
 The ``Intermediary server`` allows Requesters to connect, share their deep learning models, and split these models based on available Provider nodes. They group Provider nodes into clusters and distribute the relevant sub-models and communication metadata to the appropriate Providers.
 
-.. note::
-    The Intermediary Server can be hosted directly on the Requester's machine, enabling seamless integration and efficient resource utilization. By hosting the server locally, the Requester gains direct control over the distribution process, ensuring data privacy and reducing latency. This setup allows the Requester's machine to handle the splitting of the deep learning model, grouping of Provider nodes, and dissemination of sub-models and communication metadata without relying on external infrastructure. As a result, the entire orchestration of decentralized training remains within the Requester's environment, enhancing security and potentially speeding up the training process by minimizing external dependencies.
+The Intermediary Server can be hosted directly on the Requester's machine, enabling seamless integration and efficient resource utilization. By hosting the server locally, the Requester gains direct control over the distribution process, ensuring data privacy and reducing latency. This setup allows the Requester's machine to handle the splitting of the deep learning model, grouping of Provider nodes, and dissemination of sub-models and communication metadata without relying on external infrastructure. As a result, the entire orchestration of decentralized training remains within the Requester's environment, enhancing security and potentially speeding up the training process by minimizing external dependencies.

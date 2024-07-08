@@ -24,6 +24,8 @@ ravnest.trainer
 
 ravnest.utils
 -------------
+.. autofunction:: model_fusion
+
 .. autofunction:: set_seed
 
 .. automodule:: ravnest.operations.utils

@@ -20,7 +20,7 @@ class Trainer():
     :type val_loader: DataLoader, optional
     :param val_freq: Frequency of validation checks during training, defaults to 1.
     :type val_freq: int, optional
-    :param save: Flag to indicate whether to save the model after training, defaults to False.
+    :param save: Whether to save the submodel after training, defaults to False.
     :type save: bool, optional
     :param epochs: Number of epochs to train the model, defaults to 1.
     :type epochs: int, optional
