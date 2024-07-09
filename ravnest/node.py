@@ -124,12 +124,16 @@ class Node():
 
         self.param_address_mapping = {}
         param_addresses = kwargs.get('param_addresses', None)
+        self.retrieve_latest_params_data = {}
+        print(param_addresses)
         for i, address_to_param in enumerate(param_addresses.items()):
             if i < len(param_addresses) - 1:
                 keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):data_dict_keys.index(param_addresses[list(param_addresses.keys())[i+1]])]
             else:
                 keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):]
             
+            self.retrieve_latest_params_data[address_to_param[0]] = (keys[0], keys[-1])
+
             for param_name in keys:
                 self.param_address_mapping[param_name] = address_to_param[0]
 
@@ -234,6 +238,7 @@ class Node():
                                           forward_target_port=self.forward_target_port, 
                                           backward_target_host=self.backward_target_host, 
                                           backward_target_port=self.backward_target_port, 
+                                          retrieve_latest_params_data=self.retrieve_latest_params_data,
                                           output_tensors=self.output_tensors, 
                                           input_tensors=self.input_tensors,
                                           reduce_ring_buffers=self.reduce_ring_buffers, 

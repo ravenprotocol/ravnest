@@ -11,7 +11,7 @@ class Communication():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
                  ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None, device = torch.device('cpu'),
                  compression=False, forward_target_host=None, forward_target_port=None,
-                 backward_target_host=None, backward_target_port=None, 
+                 backward_target_host=None, backward_target_port=None, retrieve_latest_params_data = None,
                  output_tensors=None, input_tensors=None,
                  reduce_ring_buffers=None, gather_ring_buffers=None,
                  reduce_iteration=None, gather_iteration=None,
@@ -27,6 +27,7 @@ class Communication():
         self.ring_param_keys = ring_param_keys
         self.ring_ids = ring_ids
         self.param_address_mapping = param_address_mapping
+        self.retrieve_latest_params_data = retrieve_latest_params_data
 
         self.reduce_lock = reduce_lock
         self.gather_lock = gather_lock
@@ -278,17 +279,9 @@ class Communication():
             self.averaged_optim_params_buffer.update(chunked_optim_data)
 
     def get_latest_weights(self):
-        address_to_param_names = {}
-        for k,_ in self.model.state_dict().items():
-            address = self.param_address_mapping[k]
-            if address_to_param_names.get(address, None) is not None:
-                address_to_param_names[address][1] = k
-            else:
-                address_to_param_names[address] = [k, k]
-        
         total_state_dict = {}
         threads = []
-        for address, param_names in address_to_param_names.items():
+        for address, param_names in self.retrieve_latest_params_data.items():
             t = Thread(target=self.send_latest_weights_request, args=(address.split(':')[0], address.split(':')[1], param_names, total_state_dict))
             threads.append(t)
             t.start()
