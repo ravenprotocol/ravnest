@@ -93,6 +93,7 @@ class Trainer():
                 self.lr_scheduler.step()
             print('Epoch: ', epoch)
         
+        self.node.comm_session.parallel_ring_reduce()
         print('Training Done!: ', time.time() - t1, ' seconds')
 
         if self.save:

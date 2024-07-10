@@ -38,6 +38,13 @@ class Compute():
         self.recompute_thread = None
         self.file_loss = 0
         # self.recompute_stream = torch.cuda.Stream(self.device)
+        # self.version_to_param[self.current_version] = self.get_params_clone()
+        # self.latest_weights_lock.acquire(block=True)
+        # self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
+        # self.latest_weights_lock.release()
+        self.update_model_version()
+
+    def update_model_version(self):
         self.version_to_param[self.current_version] = self.get_params_clone()
         self.latest_weights_lock.acquire(block=True)
         self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
@@ -182,12 +189,14 @@ class Compute():
                 del self.version_to_param[self.current_version]
 
         self.current_version += 1
-        self.version_to_param[self.current_version] = self.get_params_clone()
+        # self.version_to_param[self.current_version] = self.get_params_clone()
         print('Len of dictionaries: ', len(self.fpid_to_version), len(self.version_to_fpid), len(self.version_to_param), len(self.output_tensors))
         
-        self.latest_weights_lock.acquire(block=True)
-        self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
-        self.latest_weights_lock.release()
+        # self.latest_weights_lock.acquire(block=True)
+        # self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
+        # self.latest_weights_lock.release()
+
+        self.update_model_version()
 
         print('After Backward: ')
         check_gpu_usage()

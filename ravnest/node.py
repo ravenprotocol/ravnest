@@ -398,11 +398,13 @@ class Node():
 
                         self.comm_session.parallel_ring_reduce()
                         # self.compute_session.current_version += 1
-                        self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
+                        # self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
 
-                        self.latest_weights_lock.acquire(block=True)
-                        self.latest_weights_buffer['state_dict'] = self.compute_session.version_to_param[self.compute_session.current_version]
-                        self.latest_weights_lock.release()
+                        # self.latest_weights_lock.acquire(block=True)
+                        # self.latest_weights_buffer['state_dict'] = self.compute_session.version_to_param[self.compute_session.current_version]
+                        # self.latest_weights_lock.release()
+
+                        self.compute_session.update_model_version()
 
                         # print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
 
@@ -721,6 +723,12 @@ class Node():
         os.remove('{}/submod.pt'.format(self.template_path))
         self.comm_session.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('SAVE done')
+
+    def update_with_latest_weights(self):
+        latest_sd = self.comm_session.get_latest_weights()
+        load_state_dict_conserve_versions(self.compute_session.model, latest_sd)
+        self.compute_session.update_model_version()
+        print('Model latest weights loaded!')
 
     def reset(self):
         """Reset the node's auxiliary and stateful data.

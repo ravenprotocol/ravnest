@@ -74,8 +74,6 @@ class Communication():
                 
                 if buffer_status.status == BufferStatus.SEND_BUFFER:
                     send_flag = True
-                
-
             response = stub.send_buffer(generate_stream(data, type=type))
     
     def create_backward_payload(self, forward_pass_id=None, model_args=None):        
