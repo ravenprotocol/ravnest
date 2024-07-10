@@ -5,13 +5,13 @@ import torch
 from .utils import *
 from .strings import *
 from .protos.server_pb2_grpc import CommServerStub
-from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration
+from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration, SendLatestWeights
 
 class Communication():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
                  ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None, device = torch.device('cpu'),
                  compression=False, forward_target_host=None, forward_target_port=None,
-                 backward_target_host=None, backward_target_port=None, 
+                 backward_target_host=None, backward_target_port=None, retrieve_latest_params_data = None,
                  output_tensors=None, input_tensors=None,
                  reduce_ring_buffers=None, gather_ring_buffers=None,
                  reduce_iteration=None, gather_iteration=None,
@@ -27,6 +27,7 @@ class Communication():
         self.ring_param_keys = ring_param_keys
         self.ring_ids = ring_ids
         self.param_address_mapping = param_address_mapping
+        self.retrieve_latest_params_data = retrieve_latest_params_data
 
         self.reduce_lock = reduce_lock
         self.gather_lock = gather_lock
@@ -73,8 +74,6 @@ class Communication():
                 
                 if buffer_status.status == BufferStatus.SEND_BUFFER:
                     send_flag = True
-                
-
             response = stub.send_buffer(generate_stream(data, type=type))
     
     def create_backward_payload(self, forward_pass_id=None, model_args=None):        
@@ -277,6 +276,19 @@ class Communication():
         if self.average_optim:
             self.averaged_optim_params_buffer.update(chunked_optim_data)
 
+    def get_latest_weights(self):
+        total_state_dict = {}
+        threads = []
+        for address, param_names in self.retrieve_latest_params_data.items():
+            t = Thread(target=self.send_latest_weights_request, args=(address.split(':')[0], address.split(':')[1], param_names, total_state_dict))
+            threads.append(t)
+            t.start()
+
+        for thread in threads:
+            thread.join()
+
+        return total_state_dict
+
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
         with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
             stub = CommServerStub(channel)
@@ -294,6 +306,29 @@ class Communication():
                 if iteration_resp.iteration == self.gather_iteration[ring_id]:
                     break
             response = stub.gather_chunk(generate_data_stream(data_dict, ring_id=ring_id))
+
+    def send_latest_weights_request(self, target_host, target_port, param_names, total_state_dict):
+        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+            stub = CommServerStub(channel)
+            param_names = cPickle.dumps(param_names)
+            response = stub.get_latest_weights(SendLatestWeights(param_names=param_names))
+
+            size_accumulated_tensor_buffer = 0
+            accumulated_tensor_buffer = b''
+        
+            for data in response:
+                data = data.tensor_chunk
+                tensor_size = data.tensor_size
+                buffer = data.buffer
+
+                if size_accumulated_tensor_buffer < tensor_size:
+                    accumulated_tensor_buffer += buffer
+                    size_accumulated_tensor_buffer = len(accumulated_tensor_buffer)
+
+        data = cPickle.loads(accumulated_tensor_buffer)
+        total_state_dict.update(data)
+        # return data
+
 
     def create_no_grad_forward_payload(self, output, tensors=None):
         payload = self.output_template.copy()

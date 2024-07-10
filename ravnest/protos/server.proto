@@ -9,6 +9,7 @@ service CommServer {
   rpc gather_chunk (stream GatherChunk) returns (ReceivedChunk) {}
   rpc reduce_iteration (CheckReduceIteration) returns (ReduceIterationReply) {}
   rpc gather_iteration (CheckGatherIteration) returns (GatherIterationReply) {}
+  rpc get_latest_weights (SendLatestWeights) returns (stream WeightsChunk) {}
 }
 
 message CheckBufferStatus {
@@ -28,6 +29,11 @@ message ReduceChunk {
 message GatherChunk {
   int32 ring_id = 1;
   DataChunk data_chunk = 2;
+}
+
+message WeightsChunk {
+  // int32 
+  TensorChunk tensor_chunk = 2;
 }
 
 message DataChunk {
@@ -54,4 +60,8 @@ message CheckGatherIteration {
 
 message GatherIterationReply {
   int32 iteration = 1;
+}
+
+message SendLatestWeights {
+  bytes param_names = 1;
 }

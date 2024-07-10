@@ -10,6 +10,7 @@ torch.jit.set_fusion_strategy([('STATIC',0), ('DYNAMIC', 0)])
 class Compute():
     def __init__(self, model = None, optimizer = None, 
                 criterion = None, compression = False,
+                latest_weights_buffer=None, latest_weights_lock=None,
                 input_tensors = None, tensor_id = None, 
                 output_template = None, input_template = None,
                 node_type=None,
@@ -23,6 +24,8 @@ class Compute():
         self.fpid_to_version = {}
         self.version_to_fpid = {}
         self.version_to_param = {}
+        self.latest_weights_lock = latest_weights_lock
+        self.latest_weights_buffer = latest_weights_buffer
         self.fpid_to_rng = {}
         self.submod_file = submod_file
         self.loss_filename = loss_filename
@@ -35,7 +38,17 @@ class Compute():
         self.recompute_thread = None
         self.file_loss = 0
         # self.recompute_stream = torch.cuda.Stream(self.device)
+        # self.version_to_param[self.current_version] = self.get_params_clone()
+        # self.latest_weights_lock.acquire(block=True)
+        # self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
+        # self.latest_weights_lock.release()
+        self.update_model_version()
+
+    def update_model_version(self):
         self.version_to_param[self.current_version] = self.get_params_clone()
+        self.latest_weights_lock.acquire(block=True)
+        self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
+        self.latest_weights_lock.release()
 
     def root_forward_compute(self, tensors, forward_pass_id, **kwargs):
         if self.recompute_thread is not None:
@@ -176,9 +189,15 @@ class Compute():
                 del self.version_to_param[self.current_version]
 
         self.current_version += 1
-        self.version_to_param[self.current_version] = self.get_params_clone()
+        # self.version_to_param[self.current_version] = self.get_params_clone()
         print('Len of dictionaries: ', len(self.fpid_to_version), len(self.version_to_fpid), len(self.version_to_param), len(self.output_tensors))
         
+        # self.latest_weights_lock.acquire(block=True)
+        # self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
+        # self.latest_weights_lock.release()
+
+        self.update_model_version()
+
         print('After Backward: ')
         check_gpu_usage()
 

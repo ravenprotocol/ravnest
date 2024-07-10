@@ -11,7 +11,7 @@ import _pickle as cPickle
 from contextlib import contextmanager
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from .protos.tensor_pb2 import TensorChunk, SendTensor
-from .protos.server_pb2 import ReduceChunk, DataChunk
+from .protos.server_pb2 import ReduceChunk, DataChunk, WeightsChunk
 
 T = TypeVar("T")
 FP16_MIN, FP16_MAX = torch.finfo(torch.float16).min, torch.finfo(torch.float16).max
@@ -45,6 +45,24 @@ def generate_stream(data, type=None):
     else:
         tensor_chunk = TensorChunk(buffer=obj, type='$tensor', tensor_size=file_size)
         yield SendTensor(tensor_chunk=tensor_chunk, type=type)
+
+def generate_weights_stream(data):
+    if not isinstance(data, bytes):
+        obj = cPickle.dumps(data)
+    else:
+        obj = data
+    
+    file_size = len(obj)
+    blocksize = 2*1024*1024
+    if file_size > blocksize:
+        for i in range(0, file_size, blocksize):
+            data = obj[i:i+blocksize]
+            tensor_chunk = TensorChunk(buffer=data, type='$tensor', tensor_size=file_size)
+            yield WeightsChunk(tensor_chunk=tensor_chunk)
+        
+    else:
+        tensor_chunk = TensorChunk(buffer=obj, type='$tensor', tensor_size=file_size)
+        yield WeightsChunk(tensor_chunk=tensor_chunk)
         
 def generate_data_stream(data, ring_id=None, type=None):
     if not isinstance(data, bytes):
