@@ -77,7 +77,6 @@ class GrpcService(CommServer):
                 return BufferStatusReply(status='send_buffer')
 
         elif node_type == 'backward':
-
             if incoming_node not in self.backward_id_queue:
                 self.backward_id_queue.append(incoming_node)
             if len(self.load_backward_buffer) == 0 and self.backward_id_queue[0] == incoming_node:
