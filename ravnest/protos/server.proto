@@ -10,6 +10,7 @@ service CommServer {
   rpc reduce_iteration (CheckReduceIteration) returns (ReduceIterationReply) {}
   rpc gather_iteration (CheckGatherIteration) returns (GatherIterationReply) {}
   rpc get_latest_weights (SendLatestWeights) returns (stream WeightsChunk) {}
+  rpc Ping (PingRequest) returns (PingResponse) {}
 }
 
 message CheckBufferStatus {
@@ -64,4 +65,12 @@ message GatherIterationReply {
 
 message SendLatestWeights {
   bytes param_names = 1;
+}
+
+message PingRequest {
+  string data = 1;
+}
+
+message PingResponse {
+  string data = 1;
 }
