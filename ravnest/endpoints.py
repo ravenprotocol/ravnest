@@ -1,5 +1,9 @@
 from .protos.server_pb2_grpc import CommServer
-from .protos.server_pb2 import CheckBufferStatus, BufferStatusReply, ReceivedChunk, ReduceChunk, GatherChunk, CheckReduceIteration, CheckGatherIteration, ReduceIterationReply, GatherIterationReply, SendLatestWeights, WeightsChunk
+from .protos.server_pb2 import (CheckBufferStatus, BufferStatusReply, ReceivedChunk, 
+                                ReduceChunk, GatherChunk, CheckReduceIteration, 
+                                CheckGatherIteration, ReduceIterationReply, 
+                                GatherIterationReply, SendLatestWeights, 
+                                WeightsChunk, PingRequest, PingResponse)
 from .protos.tensor_pb2 import SendTensor, SendTensorReply
 from .utils import generate_weights_stream
 
@@ -77,7 +81,6 @@ class GrpcService(CommServer):
                 return BufferStatusReply(status='send_buffer')
 
         elif node_type == 'backward':
-
             if incoming_node not in self.backward_id_queue:
                 self.backward_id_queue.append(incoming_node)
             if len(self.load_backward_buffer) == 0 and self.backward_id_queue[0] == incoming_node:
@@ -149,3 +152,6 @@ class GrpcService(CommServer):
         send_dict = {k:latest_state_dict[k] for k in state_dict_keys[key_start_index:key_end_index+1]}
         self.latest_weights_lock.release()
         return generate_weights_stream(send_dict)
+    
+    def Ping(self, request:PingRequest, context) -> PingResponse:
+        return PingResponse(data="Pong")

@@ -342,74 +342,8 @@ class Node():
                 self.backward_lock.release()
                 action = value['action']
 
-                if action == ActionTypes.BACKWARD:
-                    self.node_status = NodeStatus.BACKWARD
-                    gradient_dict = value['data']
-                    forward_pass_id = value['forward_pass_id']
-                    epoch_change = value['epoch_change']
-                    if epoch_change and self.lr_step_on_epoch_change:
-                        if self.lr_scheduler is not None:
-                            self.lr_scheduler.step()
-
-                    self.latest_backward_id = forward_pass_id
-                    print('Start of backward: ', forward_pass_id)
-
-                    update_flag = False
-                    if (self.n_backwards + 1) % self.update_frequency == 0:
-                        update_flag = True
-
-                    pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id, update_flag=update_flag)
-                    
-                    if update_flag and not self.lr_step_on_epoch_change:
-                        if self.lr_scheduler is not None:
-                            self.lr_scheduler.step()
-
-                    if self.node_type != NodeTypes.ROOT:
-                        gradients = self.comm_session.create_backward_payload(forward_pass_id=forward_pass_id)
-                        for pass_key in pass_grad_keys:
-                            if pass_key in gradients.keys():
-                                # if isinstance(gradient_dict[pass_key], list):
-                                #     gradient_dict[pass_key].append(gradients[pass_key])
-                                #     gradients[pass_key] = gradient_dict[pass_key]
-                                # else:
-                                #     gradients[pass_key] = [gradient_dict[pass_key], gradients[pass_key]]
-                                assert gradient_dict[pass_key]['dtype'] == gradients[pass_key]['dtype']
-                                gradients[pass_key] = {'dtype': gradients[pass_key]['dtype'], 'data': gradient_dict[pass_key]['data'].add_(gradients[pass_key]['data'])}
-                            else:
-                                gradients[pass_key] = gradient_dict[pass_key]
-
-                        sent_data = {'action':ActionTypes.BACKWARD,
-                                    'forward_pass_id':forward_pass_id, 
-                                    'data':gradients, 
-                                    'epoch_change':epoch_change,
-                                    }
-                        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
-                        send_trigger_threads.append(t)
-                        t.start()
-                        
-                    if self.input_tensors.get(forward_pass_id, None) is not None:
-                        del self.input_tensors[forward_pass_id]
-
-                    print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
-                    self.n_backwards += 1
-
-                    if self.n_backwards % self.reduce_threshold == 0:
-                        # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
-
-                        self.comm_session.parallel_ring_reduce()
-                        # self.compute_session.current_version += 1
-                        # self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
-
-                        # self.latest_weights_lock.acquire(block=True)
-                        # self.latest_weights_buffer['state_dict'] = self.compute_session.version_to_param[self.compute_session.current_version]
-                        # self.latest_weights_lock.release()
-
-                        self.compute_session.update_model_version()
-
-                        # print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
-
-                    # if self.device.type == 'cuda':
-                    #     torch.cuda.synchronize()
+                getattr(self, action)(value, send_trigger_threads)
+                
 
             self.node_status = NodeStatus.IDLE
 
@@ -425,214 +359,7 @@ class Node():
                 if action == ActionTypes.NO_GRAD_FORWARD and self.node_type == NodeTypes.LEAF:
                     action = ActionTypes.VAL_ACCURACY
 
-                if action == ActionTypes.ROOT_FORWARD:                    
-                    tensors = value['data']
-                    kwargs = value['kwargs']
-
-                    if tensors is not None:
-                        tensors = tensors.to(self.device)
-
-                    modified_kwargs = {}
-                    for kwarg_key, kwarg_val in kwargs.items():
-                        if isinstance(kwarg_val, torch.Tensor):
-                            modified_kwargs['l_'+kwarg_key+'_'] = kwarg_val.to(self.device)
-                        else:
-                            modified_kwargs['l_'+kwarg_key+'_'] = kwarg_val
-
-                    self.node_status = NodeStatus.FORWARD
-
-                    print('Before Root Forward: ')
-                    check_gpu_usage()
-                    output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **modified_kwargs)
-                    print('After Root Forward: ')
-                    check_gpu_usage()
-
-                    payload = self.comm_session.create_forward_payload(output, tensors=tensors)
-
-                    final_payload = {}
-                    final_payload[self.submod_file] = payload
-
-                    sent_data = {'forward_pass_id':self.forward_pass_id,
-                                'data': final_payload,
-                                'action': ActionTypes.FORWARD}
-                    
-                    print('Forward compute done for: ', self.forward_pass_id)
-                    self.forward_pass_id += 1
-                    self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
-                    self.n_forwards += 1
-                    # print('Forward compute done for: ', self.tensor_id)
-                    self.root_compute = True
-                    self.node_status = NodeStatus.IDLE
-                
-                elif action == ActionTypes.FORWARD:
-                    print('n_backwards in FORWARD: ', self.n_backwards)
-                    self.node_status = NodeStatus.FORWARD
-                    data = value['data']
-                    forward_pass_id = value['forward_pass_id']
-                    print('Start of forward: ', forward_pass_id)
-                    
-                    output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
-
-                    payload = self.comm_session.create_forward_payload(output)
-
-                    final_payload = data
-                    final_payload[self.submod_file] = payload
-
-                    sent_data = {'forward_pass_id':forward_pass_id,
-                                'data': final_payload,
-                                'action': ActionTypes.FIND_LOSS}
-                    t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
-                    send_trigger_threads.append(t)
-                    t.start()
-                    self.n_forwards += 1
-                    print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
-
-                elif action == ActionTypes.FIND_LOSS:
-                    self.node_status = NodeStatus.FORWARD
-                    epoch_change = False
-                    
-                    targets = next(self.labels_iterator, None)
-                    if targets is None:
-                        epoch_change = self.lr_step_on_epoch_change
-                        self.labels_iterator = iter(self.labels)
-                        targets = next(self.labels_iterator)
-                        if epoch_change:
-                            if self.lr_scheduler is not None:
-                                self.lr_scheduler.step()
-                        print('\n ---------------------- Reset Data Iterator ------------------------')
-
-                    # print('For: ', value['forward_pass_id'])
-                    # print('X_train: ', targets[0][0][0])
-                    # print('y_train: ', targets[1])
-
-                    # targets = targets[1].to(self.device)
-                    # targets = targets.to(self.device)    # For BERT
-
-                    update_flag = False
-                    if (self.n_backwards + 1) % self.update_frequency == 0:
-                        update_flag = True
-                    
-                    data = value['data']
-                    model_args = self.compute_session.leaf_find_loss(data, targets=targets, update_flag=update_flag)
-                    if update_flag and not self.lr_step_on_epoch_change:
-                        if self.lr_scheduler is not None:
-                            self.lr_scheduler.step()
-                    
-                    gradients = self.comm_session.create_backward_payload(model_args=model_args)
-
-                    sent_data = {'action':ActionTypes.BACKWARD, 
-                                'data':gradients, 
-                                'forward_pass_id':value['forward_pass_id'],
-                                'epoch_change':epoch_change
-                                }
-                    t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
-                    send_trigger_threads.append(t)
-                    t.start()
-
-                    # print('find_loss done. Used RAM %: ', psutil.virtual_memory().percent)
-                    self.n_backwards += 1
-                    # print('N_backwards: ', self.n_backwards)
-
-                    if self.n_backwards % self.reduce_threshold == 0:
-                        # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
-
-                        self.comm_session.parallel_ring_reduce()
-                        # print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
-
-                    # if self.device.type == 'cuda':
-                    #     # print('Sync')
-                    #     torch.cuda.synchronize()
-
-                elif action == ActionTypes.NO_GRAD_FORWARD:
-                    # self.comm_session.parallel_ring_reduce()
-                    self.node_status = NodeStatus.FORWARD
-                    print('No grad forward')
-                    data = value['data']
-                    output = self.compute_session.middle_no_grad_forward_compute(data)
-                    payload = self.comm_session.create_no_grad_forward_payload(output)
-
-                    final_payload = data
-                    final_payload[self.submod_file] = payload
-
-                    sent_data = {
-                                    'data': final_payload,
-                                    'action': value['output_type']                                            
-                                }
-                    t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
-                    send_trigger_threads.append(t)
-                    t.start()
-
-                elif action == ActionTypes.VAL_ACCURACY:
-                    data = value['data']
-                    model_args = self.compute_session.create_no_grad_model_args(data)
-
-                    if self.test_labels_iterator is None:
-                        if isinstance(self.test_labels, torch.Tensor):
-                            self.test_labels_iterator = self.test_labels
-                        else:
-                            self.test_labels_iterator = iter(self.test_labels)
-                    
-                    self.model.eval()
-                    with torch.no_grad():
-                        y_pred = self.model(*model_args)
-                        _, y_pred_tags = torch.max(y_pred, dim=1)
-                                                
-                        y_test = next(self.test_labels_iterator, None)
-                        if y_test is None:
-                            self.test_labels_iterator = iter(self.test_labels)
-                            y_test = next(self.test_labels_iterator)
-
-                        y_test = y_test[1].to(self.device)
-
-                        #for cnn
-                        y_test = torch.argmax(y_test, dim=1)
-
-                        correct_pred = (y_pred_tags == y_test).float()
-                        val_acc = correct_pred.sum() / len(y_test)
-                        val_acc = torch.round(val_acc * 100)
-
-                    self.net_val_accuracy.append(val_acc.item())
-                    if len(self.net_val_accuracy) == len(self.test_labels_iterator):
-                        validation_accuracy = round(sum(self.net_val_accuracy) / len(self.net_val_accuracy), 2)
-                        print('Validation Accuracy: ', validation_accuracy)
-                        f = open("val_accuracies.txt", "a")
-                        f.write(str(validation_accuracy) + '\n')
-                        f.close() 
-                        self.net_val_accuracy = []
-
-
-                elif action == ActionTypes.ACCURACY:
-                    # self.comm_session.parallel_ring_reduce()
-                    print('Finding accuracy')
-                    data = value['data']
-                    model_args = self.compute_session.create_no_grad_model_args(data)
-        
-                    self.model.eval()
-                    with torch.no_grad():
-                        y_pred = self.model(*model_args)
-                        y_pred = np.argmax(y_pred.detach().cpu().numpy(), axis=-1)
-                        y_test = np.argmax(self.test_labels, axis=-1)
-                        accuracy = np.sum(y_pred == y_test, axis=0)/len(y_test)
-                        print('\nTest Accuracy: ', accuracy)
-
-                elif action == ActionTypes.PREDICTION:
-                    data = value['data']
-                    print('Prediction: ', data)
-                    model_args = self.create_no_grad_model_args(data)
-                    self.model.eval()
-                    with torch.no_grad():
-                        pred = self.model(*model_args)
-                    print('Predicted: ', pred)
-
-                elif action == ActionTypes.SAVE_SUBMODEL:
-                    script = torch.jit.script(self.model)
-                    script.save('{}/{}.pt'.format(self.template_path, self.submod_file))
-                    os.remove('{}/submod.pt'.format(self.template_path))
-                    if self.node_type != NodeTypes.LEAF:
-                        t = Thread(target=self.comm_session.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
-                        send_trigger_threads.append(t)
-                        t.start()                        
-                    print('SAVE done')
+                getattr(self, action)(value, send_trigger_threads)
 
             if len(send_trigger_threads)>0:
                 for send_threads in send_trigger_threads:
@@ -699,6 +426,278 @@ class Node():
         self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         print('No Grad forward compute done')
         self.node_status = NodeStatus.IDLE
+
+    def root_forward(self, value, send_threads):
+        tensors = value['data']
+        kwargs = value['kwargs']
+
+        if tensors is not None:
+            tensors = tensors.to(self.device)
+
+        modified_kwargs = {}
+        for kwarg_key, kwarg_val in kwargs.items():
+            if isinstance(kwarg_val, torch.Tensor):
+                modified_kwargs['l_'+kwarg_key+'_'] = kwarg_val.to(self.device)
+            else:
+                modified_kwargs['l_'+kwarg_key+'_'] = kwarg_val
+
+        self.node_status = NodeStatus.FORWARD
+
+        print('Before Root Forward: ')
+        check_gpu_usage()
+        output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **modified_kwargs)
+        print('After Root Forward: ')
+        check_gpu_usage()
+
+        payload = self.comm_session.create_forward_payload(output, tensors=tensors)
+
+        final_payload = {}
+        final_payload[self.submod_file] = payload
+
+        sent_data = {'forward_pass_id':self.forward_pass_id,
+                    'data': final_payload,
+                    'action': ActionTypes.FORWARD}
+        
+        print('Forward compute done for: ', self.forward_pass_id)
+        self.forward_pass_id += 1
+        self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        self.n_forwards += 1
+        # print('Forward compute done for: ', self.tensor_id)
+        self.root_compute = True
+        self.node_status = NodeStatus.IDLE
+
+    def forward(self, value, send_threads):
+        print('n_backwards in FORWARD: ', self.n_backwards)
+        self.node_status = NodeStatus.FORWARD
+        data = value['data']
+        forward_pass_id = value['forward_pass_id']
+        print('Start of forward: ', forward_pass_id)
+        
+        output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
+
+        payload = self.comm_session.create_forward_payload(output)
+
+        final_payload = data
+        final_payload[self.submod_file] = payload
+
+        sent_data = {'forward_pass_id':forward_pass_id,
+                    'data': final_payload,
+                    'action': ActionTypes.FIND_LOSS}
+        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        send_threads.append(t)
+        t.start()
+        self.n_forwards += 1
+        print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
+
+    def no_grad_forward(self, value, send_threads):
+        # self.comm_session.parallel_ring_reduce()
+        self.node_status = NodeStatus.FORWARD
+        print('No grad forward')
+        data = value['data']
+        output = self.compute_session.middle_no_grad_forward_compute(data)
+        payload = self.comm_session.create_no_grad_forward_payload(output)
+
+        final_payload = data
+        final_payload[self.submod_file] = payload
+
+        sent_data = {
+                        'data': final_payload,
+                        'action': value['output_type']                                            
+                    }
+        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        send_threads.append(t)
+        t.start()
+
+    def backward(self, value, send_threads):
+        self.node_status = NodeStatus.BACKWARD
+        gradient_dict = value['data']
+        forward_pass_id = value['forward_pass_id']
+        epoch_change = value['epoch_change']
+        if epoch_change and self.lr_step_on_epoch_change:
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.step()
+
+        self.latest_backward_id = forward_pass_id
+        print('Start of backward: ', forward_pass_id)
+
+        update_flag = False
+        if (self.n_backwards + 1) % self.update_frequency == 0:
+            update_flag = True
+
+        pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id, update_flag=update_flag)
+        
+        if update_flag and not self.lr_step_on_epoch_change:
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.step()
+
+        if self.node_type != NodeTypes.ROOT:
+            gradients = self.comm_session.create_backward_payload(forward_pass_id=forward_pass_id)
+            for pass_key in pass_grad_keys:
+                if pass_key in gradients.keys():
+                    assert gradient_dict[pass_key]['dtype'] == gradients[pass_key]['dtype']
+                    gradients[pass_key] = {'dtype': gradients[pass_key]['dtype'], 'data': gradient_dict[pass_key]['data'].add_(gradients[pass_key]['data'])}
+                else:
+                    gradients[pass_key] = gradient_dict[pass_key]
+
+            sent_data = {'action':ActionTypes.BACKWARD,
+                        'forward_pass_id':forward_pass_id, 
+                        'data':gradients, 
+                        'epoch_change':epoch_change,
+                        }
+            t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+            send_threads.append(t)
+            t.start()
+            
+        if self.input_tensors.get(forward_pass_id, None) is not None:
+            del self.input_tensors[forward_pass_id]
+
+        print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
+        self.n_backwards += 1
+
+        if self.n_backwards % self.reduce_threshold == 0:
+            # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+
+            self.comm_session.parallel_ring_reduce()
+            # self.compute_session.current_version += 1
+            # self.compute_session.version_to_param[self.compute_session.current_version] = self.compute_session.get_params_clone()
+
+            # self.latest_weights_lock.acquire(block=True)
+            # self.latest_weights_buffer['state_dict'] = self.compute_session.version_to_param[self.compute_session.current_version]
+            # self.latest_weights_lock.release()
+
+            self.compute_session.update_model_version()
+
+            # print('\nAVeraged params: ', self.compute_session.model.state_dict()[list(self.compute_session.model.state_dict().keys())[0]])
+
+        # if self.device.type == 'cuda':
+        #     torch.cuda.synchronize()
+
+    def find_loss(self, value, send_threads):
+        self.node_status = NodeStatus.FORWARD
+        epoch_change = False
+        
+        targets = next(self.labels_iterator, None)
+        if targets is None:
+            epoch_change = self.lr_step_on_epoch_change
+            self.labels_iterator = iter(self.labels)
+            targets = next(self.labels_iterator)
+            if epoch_change:
+                if self.lr_scheduler is not None:
+                    self.lr_scheduler.step()
+            print('\n ---------------------- Reset Data Iterator ------------------------')
+
+        # print('For: ', value['forward_pass_id'])
+        # print('X_train: ', targets[0][0][0])
+        # print('y_train: ', targets[1])
+
+        # targets = targets[1].to(self.device)
+        # targets = targets.to(self.device)    # For BERT
+
+        update_flag = False
+        if (self.n_backwards + 1) % self.update_frequency == 0:
+            update_flag = True
+        
+        data = value['data']
+        model_args = self.compute_session.leaf_find_loss(data, targets=targets, update_flag=update_flag)
+        if update_flag and not self.lr_step_on_epoch_change:
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.step()
+        
+        gradients = self.comm_session.create_backward_payload(model_args=model_args)
+
+        sent_data = {'action':ActionTypes.BACKWARD, 
+                    'data':gradients, 
+                    'forward_pass_id':value['forward_pass_id'],
+                    'epoch_change':epoch_change
+                    }
+        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+        send_threads.append(t)
+        t.start()
+
+        # print('find_loss done. Used RAM %: ', psutil.virtual_memory().percent)
+        self.n_backwards += 1
+        # print('N_backwards: ', self.n_backwards)
+
+        if self.n_backwards % self.reduce_threshold == 0:
+            # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
+
+            self.comm_session.parallel_ring_reduce()
+            # print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
+
+        # if self.device.type == 'cuda':
+        #     # print('Sync')
+        #     torch.cuda.synchronize()
+            
+    def val_accuracy(self, value, send_threads):
+        data = value['data']
+        model_args = self.compute_session.create_no_grad_model_args(data)
+
+        if self.test_labels_iterator is None:
+            if isinstance(self.test_labels, torch.Tensor):
+                self.test_labels_iterator = self.test_labels
+            else:
+                self.test_labels_iterator = iter(self.test_labels)
+        
+        self.model.eval()
+        with torch.no_grad():
+            y_pred = self.model(*model_args)
+            _, y_pred_tags = torch.max(y_pred, dim=1)
+                                    
+            y_test = next(self.test_labels_iterator, None)
+            if y_test is None:
+                self.test_labels_iterator = iter(self.test_labels)
+                y_test = next(self.test_labels_iterator)
+
+            y_test = y_test[1].to(self.device)
+
+            #for cnn
+            y_test = torch.argmax(y_test, dim=1)
+
+            correct_pred = (y_pred_tags == y_test).float()
+            val_acc = correct_pred.sum() / len(y_test)
+            val_acc = torch.round(val_acc * 100)
+
+        self.net_val_accuracy.append(val_acc.item())
+        if len(self.net_val_accuracy) == len(self.test_labels_iterator):
+            validation_accuracy = round(sum(self.net_val_accuracy) / len(self.net_val_accuracy), 2)
+            print('Validation Accuracy: ', validation_accuracy)
+            f = open("val_accuracies.txt", "a")
+            f.write(str(validation_accuracy) + '\n')
+            f.close() 
+            self.net_val_accuracy = []
+
+    def accuracy(self, value, send_threads):
+        # self.comm_session.parallel_ring_reduce()
+        print('Finding accuracy')
+        data = value['data']
+        model_args = self.compute_session.create_no_grad_model_args(data)
+
+        self.model.eval()
+        with torch.no_grad():
+            y_pred = self.model(*model_args)
+            y_pred = np.argmax(y_pred.detach().cpu().numpy(), axis=-1)
+            y_test = np.argmax(self.test_labels, axis=-1)
+            accuracy = np.sum(y_pred == y_test, axis=0)/len(y_test)
+            print('\nTest Accuracy: ', accuracy)
+
+    def prediction(self, value, send_threads):
+        data = value['data']
+        print('Prediction: ', data)
+        model_args = self.create_no_grad_model_args(data)
+        self.model.eval()
+        with torch.no_grad():
+            pred = self.model(*model_args)
+        print('Predicted: ', pred)
+
+    def save_submodel(self, value, send_threads):
+        script = torch.jit.script(self.model)
+        script.save('{}/{}.pt'.format(self.template_path, self.submod_file))
+        os.remove('{}/submod.pt'.format(self.template_path))
+        if self.node_type != NodeTypes.LEAF:
+            t = Thread(target=self.comm_session.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+            send_threads.append(t)
+            t.start()                        
+        print('SAVE done')
 
     def wait_for_backwards(self):
         """Wait until all backward passes are completed.
