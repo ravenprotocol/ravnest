@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import time
+from .node import Node
 from .strings import *
 
 class Trainer():
@@ -34,10 +35,12 @@ class Trainer():
     :type n_forwards: int
     """
 
-    def __init__(self, node=None, lr_scheduler=None, lr_scheduler_params={}, train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, batch_size=64, step_size=1, inputs_dtype=None):
+    def __init__(self, node:Node = None, lr_scheduler=None, lr_scheduler_params={}, 
+                 train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, 
+                 batch_size=64, step_size=1, update_frequency = 1, loss_fn = None, accuracy_fn=None):
         self.node = node
-        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
-            return
+        # if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
+        #     return
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.val_freq = val_freq
@@ -46,15 +49,12 @@ class Trainer():
         self.batch_size = batch_size
         self.step_size = step_size
         self.n_forwards = 0
-        self.inputs_dtype = inputs_dtype
+        self.update_frequency = update_frequency
         self.lr_scheduler=None
+        self.loss_fn = loss_fn
+        self.accuracy_fn = accuracy_fn
         if lr_scheduler is not None:
             self.lr_scheduler = lr_scheduler(self.node.optimizer, **lr_scheduler_params)
-
-    def prelim_checks(self):
-        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
-            while True:
-                time.sleep(0)
 
     def train(self):
         """Train the model using the specified training and validation data loaders.
@@ -63,56 +63,64 @@ class Trainer():
         performing forward computations, updating parameters, and optionally
         evaluating on validation data.
         """
-        self.prelim_checks()
+        # self.prelim_checks()
         t1 = time.time()
-        self.n_forwards = 0
         for epoch in range(self.epochs):
+            self.node.model.train()
             for X_train, y_train in self.train_loader:
-                if torch.is_tensor(X_train):
-                    if self.inputs_dtype is not None:
-                        if X_train.dtype == self.inputs_dtype:
-                            self.node.forward_compute(tensors=X_train)
-                        else:
-                            self.node.forward_compute(tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
-                    else:
-                        self.node.forward_compute(tensors=X_train)
-                else:
-                    if X_train.dtype == self.inputs_dtype:
-                        self.node.forward_compute(tensors=torch.tensor(X_train.numpy(), dtype=self.inputs_dtype))
-                    else:
-                        self.node.forward_compute(tensors=torch.tensor(X_train.numpy()))
-                self.n_forwards += 1                
+                outputs = self.node.forward(X_train)
+                loss = self.node.dist_func(self.loss_fn, args=(outputs, y_train))
+                if self.node.node_type == NodeTypes.LEAF:
+                    print('Loss: ', loss)
+                self.node.backward(loss)
+
+                if self.node.n_backwards % self.update_frequency == 0:
+                    self.node.optimizer_step()
+                    self.node.model.zero_grad()
+                    self.node.optimizer.zero_grad()            
             
             if self.val_loader is not None: 
-                # if self.n_forwards % self.val_freq == 0:
+                self.node.model.eval()
+                acc = 0
                 for X_test, y_test in self.val_loader:
-                    self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
+                    output = self.node.no_grad_forward(X_test)
+                    accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
+                    if self.node.node_type == NodeTypes.LEAF:
+                        acc += accuracy.numpy()
+                if self.node.node_type == NodeTypes.LEAF:
+                    print('Accuracy: ', acc/len(self.val_loader))
 
-            self.node.wait_for_backwards()
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
             print('Epoch: ', epoch)
+
+        self.node.model.train()
+        self.await_backwards()
         
         self.node.comm_session.parallel_ring_reduce()
         print('Training Done!: ', time.time() - t1, ' seconds')
 
         if self.save:
             self.node.trigger_save_submodel()
-        
+    
+    def await_backwards(self):
+        while self.node.n_backwards < self.node.n_forwards:
+            if self.node.node_type != NodeTypes.LEAF:
+                self.node.backward()
+                if self.node.n_backwards % self.update_frequency == 0:
+                    self.node.optimizer_step()
+                    self.node.model.zero_grad()
+                    self.node.optimizer.zero_grad()   
+
     def pred(self, data):
         """Perform prediction on sample test data using the trained model.
 
-        :param data: Sample data for prediction, can be numpy array or torch tensor
-        :type data: np.ndarray or torch.Tensor
+        :param data: Sample data for prediction
+        :type data: torch.Tensor
         :return: Prediction result
         :rtype: torch.Tensor
         """
-        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
-            return
-        if isinstance(data, np.ndarray):
-            pred = self.node.no_grad_forward_compute(tensors=torch.tensor(data, dtype=torch.float32), output_type='accuracy')
-        else:
-            pred = self.node.no_grad_forward_compute(tensors=torch.tensor(data.numpy(), dtype=torch.float32), output_type='accuracy')
+        pred = self.node.no_grad_forward(data)
         return pred
     
     def evaluate(self):
@@ -121,7 +129,15 @@ class Trainer():
         Performs inference on validation data and computes validation accuracy
         using the trained model.
         """
-        if self.node.node_type == NodeTypes.STEM or self.node.node_type == NodeTypes.LEAF:
-            return
-        for X_test, y_test in self.val_loader:
-            self.node.no_grad_forward_compute(tensors=torch.tensor(X_test.numpy(), dtype=self.inputs_dtype), output_type='val_accuracy')
+
+        if self.val_loader is not None: 
+            self.node.model.eval()
+            # if self.n_forwards % self.val_freq == 0:
+            acc = 0
+            for X_test, y_test in self.val_loader:
+                # self.node.no_grad_forward_compute(tensors=X_test, output_type='val_accuracy')
+                output = self.node.no_grad_forward(X_test)
+                accuracy = self.criterion(self.accuracy_fn, args=(output, y_test))
+                if accuracy is not None:
+                    acc += accuracy.numpy()
+            print('Accuracy: ', acc/len(self.val_loader))

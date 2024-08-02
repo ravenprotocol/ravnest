@@ -39,6 +39,16 @@ def preprocess_dataset():
 def loss_fn(preds, targets):
     return torch.nn.functional.mse_loss(preds, targets[1])
 
+def accuracy_fn(preds, y_test):
+    _, y_pred_tags = torch.max(preds, dim=1)
+    #for cnn
+    y_test = torch.argmax(y_test, dim=1)
+
+    correct_pred = (y_pred_tags == y_test).float()
+    val_acc = correct_pred.sum() / len(y_test)
+    val_acc = torch.round(val_acc * 100)
+    return val_acc
+
 if __name__ == '__main__':
 
     train_loader, val_loader = preprocess_dataset()
@@ -47,17 +57,20 @@ if __name__ == '__main__':
                 optimizer = torch.optim.Adam,
                 device=torch.device('cpu'),
                 criterion = loss_fn,
-                labels = train_loader, 
-                test_labels=val_loader
+                labels = train_loader,
+                average_optim=True
                 )
 
     trainer = Trainer(node=node,
                       train_loader=train_loader,
                       val_loader=val_loader,
                       val_freq=64,
-                      epochs=100,
+                      epochs=10,
                       batch_size=64,
-                      inputs_dtype=torch.float32)
+                      save=True,
+                      loss_fn=loss_fn,
+                      accuracy_fn=accuracy_fn
+                    )
 
     trainer.train()
 

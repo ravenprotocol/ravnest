@@ -51,14 +51,15 @@ class Compute():
         self.latest_weights_lock.release()
 
     def root_forward_compute(self, tensors, forward_pass_id, **kwargs):
+        print('Is training: ', self.model.training)
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
 
         # torch.cuda.synchronize()
 
-        if not self.model.training:
-            self.model.train()
+        # if not self.model.training:
+        #     self.model.train()
 
         rng_state_cpu = torch.get_rng_state()
         rng_state_gpu = None
@@ -92,14 +93,16 @@ class Compute():
         return output
 
     def middle_forward_compute(self, data, forward_pass_id):
+        print('Is training: ', self.model.training)
+
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
 
         # torch.cuda.synchronize()
 
-        if not self.model.training:
-            self.model.train()
+        # if not self.model.training:
+        #     self.model.train()
 
         print('Middle Forward fpid: ',forward_pass_id)
         model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.STEM)
@@ -121,6 +124,9 @@ class Compute():
         
         self.fpid_to_version[forward_pass_id] = self.current_version
 
+        print('\nVersion to fpid in forward: ', self.version_to_fpid)
+
+
         return output
 
     def num_grad_enabled_output_tensors(self):
@@ -130,7 +136,7 @@ class Compute():
                 num_grad_enabled += 1
         return num_grad_enabled
 
-    def middle_backward_compute(self, gradient_dict, forward_pass_id, update_flag=False):
+    def middle_backward_compute(self, gradient_dict, forward_pass_id):
         # self.recompute_forward(forward_pass_id)
         # print('Gradient dict: ', gradient_dict)
         if self.recompute_thread is not None:
@@ -177,26 +183,11 @@ class Compute():
 
         torch.autograd.backward(leaf_output_tensors, backward_grads)
 
-        if update_flag:
-            load_grads_into_optimizer(self.model, self.optimizer)
-            self.optimizer.step()
-            load_optim_weights_into_model(self.model, self.optimizer)
-            self.model.zero_grad()
-            self.optimizer.zero_grad()
-
-        if self.version_to_fpid.get(self.current_version, None) is None:
-            if self.current_version in self.version_to_param:
-                del self.version_to_param[self.current_version]
-
-        self.current_version += 1
-        # self.version_to_param[self.current_version] = self.get_params_clone()
-        print('Len of dictionaries: ', len(self.fpid_to_version), len(self.version_to_fpid), len(self.version_to_param), len(self.output_tensors))
-        
-        # self.latest_weights_lock.acquire(block=True)
-        # self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
-        # self.latest_weights_lock.release()
-
-        self.update_model_version()
+        print('\nVersion to fpid in backward: ', self.version_to_fpid)
+        # if self.version_to_fpid.get(self.current_version, None) is None:
+        #     if self.current_version in self.version_to_param:
+        #         del self.version_to_param[self.current_version]
+        #         print('Deleted param version: ', self.current_version)
 
         print('After Backward: ')
         check_gpu_usage()
@@ -270,61 +261,66 @@ class Compute():
         print('After Recompute: ')
         check_gpu_usage()
 
-    def leaf_find_loss(self, data, targets, update_flag=False):
-        model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
-        
-        if not self.model.training:
-            self.model.train()
-
-        outputs = self.model(*model_args.values())
-
-        loss = self.criterion(outputs, targets)
+    def leaf_backward(self, loss):
 
         print('Before backward GPU: ')
         check_gpu_usage()
-        
-        # self.model.zero_grad()
-        # self.optimizer.zero_grad()
         loss.backward()
-
-        self.file_loss += loss.item()
-
-        if update_flag:
-            self.optimizer.step()
-            self.model.zero_grad()
-            self.optimizer.zero_grad()
-
-            print('Loss: ', round(self.file_loss, 4))
-            f = open(self.loss_filename, "a")
-            f.write(str(round(self.file_loss, 4)) + '\n')
-            f.close()
-            self.file_loss = 0
 
         print('After backward GPU: ')
         check_gpu_usage()
+    
+    def leaf_forward(self, data):
+        print('Is training: ', self.model.training)
+        model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
+        
+        # if not self.model.training:
+        #     self.model.train()
 
-        # print('Loss: ', round(loss.item(), 4))
-        # f = open("losses.txt", "a")
-        # f.write(str(round(loss.item(), 4)) + '\n')
-        # f.close()
+        outputs = self.model(*model_args.values())
 
-        return model_args
+        return model_args, outputs
 
-    def root_no_grad_forward_compute(self, tensors=None):
-        self.model.eval()
+    def root_no_grad_forward_compute(self, tensors=None, **kwargs):
+        # self.model.eval()
+        print('Is training: ', self.model.training)
         with torch.no_grad():
-            output = self.model(tensors)
-
+            if tensors is not None:
+                output = self.model(tensors, **kwargs)
+            else:
+                output = self.model(**kwargs)
         return output
 
     def middle_no_grad_forward_compute(self, data):
+        print('Is training: ', self.model.training)
+
         model_args = self.create_no_grad_model_args(data)
         
-        self.model.eval()
+        # self.model.eval()
         with torch.no_grad():
             output = self.model(*model_args)
 
         return output
+    
+    def leaf_no_grad_forward(self, data):
+        print('Is training: ', self.model.training)
+
+        model_args = self.create_no_grad_model_args(data)
+        # self.model.eval()
+        with torch.no_grad():
+            output = self.model(*model_args)
+        return output
+
+    def optimizer_step(self):
+        if self.node_type == NodeTypes.LEAF:
+            self.optimizer.step()
+        else:
+            load_grads_into_optimizer(self.model, self.optimizer)
+            self.optimizer.step()
+            load_optim_weights_into_model(self.model, self.optimizer)
+
+            self.current_version += 1
+            self.update_model_version()
 
     def create_model_args(self, data, forward_pass_id=None, node_type=None):
         if node_type != NodeTypes.LEAF:
