@@ -7,11 +7,13 @@ import psutil
 import pickle
 import shutil
 import time
+
 from .communication import Communication
 from .compute import Compute
 from .utils import *
 from .strings import *
 from .endpoints import GrpcService
+from .globals import g
 
 from .protos.server_pb2_grpc import add_CommServerServicer_to_server
 
@@ -153,6 +155,7 @@ class Node():
         self.update_frequency = update_frequency
 
         self.steady_state = False
+        self.forward_done = False
         
         if not reduce_factor:
             reduce_factor = len(labels)
@@ -274,7 +277,6 @@ class Node():
         self.start_server_flag.value = True
         self.server.wait_for_termination()
 
-
     def start_grpc_server(self):
         """Start the gRPC server asynchronously.
 
@@ -311,6 +313,8 @@ class Node():
                     action = 'leaf_forward'#ActionTypes.FIND_LOSS
                 elif self.node_type == NodeTypes.STEM:
                     action = 'stem_forward'
+                g.forward_done = True
+                
             if action == ActionTypes.NO_GRAD_FORWARD:
                 if self.node_type == NodeTypes.LEAF:
                     # action = ActionTypes.VAL_ACCURACY
@@ -350,7 +354,6 @@ class Node():
                 self.steady_state = True
 
         self.node_status = NodeStatus.IDLE
-        self.join_send_threads()
         return monitor_flag_break
     
     def monitor_backward_buffer(self):
@@ -367,35 +370,28 @@ class Node():
     def forward(self, tensors=None, **kwargs):
         outputs = None
         if self.node_type == NodeTypes.ROOT:
-            self.forward_compute(tensors, **kwargs)
-        else: #elif self.node.node_type == NodeTypes.LEAF:
+            if self.forward_pass_id - self.latest_backward_id <= self.cluster_length:
+                self.forward_compute(tensors, **kwargs)
+        elif self.node_type == NodeTypes.STEM:
+            self.check_forward_buffer()
+        else: 
             outputs = self.monitor_forward_buffer()
-        # else:
-        #     # self.node.check_forward_buffer()
-        #     # self.node.new_check_load_buffers()
-        #     self.node.monitor_forward_buffer()
         return outputs
     
     def backward(self, loss=None):
         if self.node_type == NodeTypes.ROOT or self.node_type == NodeTypes.STEM:
-            if self.steady_state:
-                self.monitor_backward_buffer()
-            else:
-                self.check_backward_buffer()
+            self.check_backward_buffer()
         elif self.node_type == NodeTypes.LEAF:
             self.leaf_backward_compute(loss)
+        self.join_send_threads()
 
     def no_grad_forward(self, tensors=None, **kwargs):
         outputs = None
         if self.node_type == NodeTypes.ROOT:
-            # self.forward_compute_new(tensors, **kwargs)
             self.no_grad_forward_compute(tensors, **kwargs)
-        else: #elif self.node.node_type == NodeTypes.LEAF:
+        else:
             outputs = self.monitor_forward_buffer()
-        # else:
-        #     # self.node.check_forward_buffer()
-        #     # self.node.new_check_load_buffers()
-        #     self.node.monitor_forward_buffer()
+        self.join_send_threads()
         return outputs
 
     def forward_compute(self, tensors=None, **kwargs):
@@ -446,7 +442,7 @@ class Node():
                     'action': ActionTypes.FORWARD}
         self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
         self.forward_pass_id += 1
-        
+        g.forward_done = True
         self.root_compute = True
         self.node_status = NodeStatus.IDLE
 

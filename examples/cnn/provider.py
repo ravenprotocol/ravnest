@@ -3,7 +3,8 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
-from ravnest import Node, Trainer, set_seed
+from ravnest import Node, set_seed
+from ravnest.trainer import BaseTrainerFullAsync#Trainer
 
 set_seed(42)
 
@@ -58,16 +59,18 @@ if __name__ == '__main__':
                 device=torch.device('cpu'),
                 criterion = loss_fn,
                 labels = train_loader,
+                test_labels=val_loader,
+                # reduce_factor=4,
                 average_optim=True
                 )
 
-    trainer = Trainer(node=node,
+    trainer = BaseTrainerFullAsync(node=node,
                       train_loader=train_loader,
                       val_loader=val_loader,
                       val_freq=64,
-                      epochs=10,
+                      epochs=100,
                       batch_size=64,
-                      save=True,
+                    #   save=True,
                       loss_fn=loss_fn,
                       accuracy_fn=accuracy_fn
                     )

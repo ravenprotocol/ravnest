@@ -8,7 +8,7 @@ if torch.cuda.is_available():
     import nvidia_smi
 import numpy as np
 import _pickle as cPickle
-from contextlib import contextmanager
+from .globals import g
 from typing import TypeVar, AsyncIterable, Optional, AsyncIterator
 from .protos.tensor_pb2 import TensorChunk, SendTensor
 from .protos.server_pb2 import ReduceChunk, DataChunk, WeightsChunk
@@ -253,3 +253,14 @@ def model_fusion(cluster_id = 0):
             print('{} path has no submodels'.format(folder_path))
     else:
         print('Submodels not found!')
+
+def no_schedule():
+    def repeat_fn(train_step):
+        def wrapper(*args, **kwargs):
+            # print('Globals Forward done: ', g.forward_done)
+            while not g.forward_done:
+                train_step(*args, **kwargs)
+            g.forward_done = False
+            return
+        return wrapper
+    return repeat_fn

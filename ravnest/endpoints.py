@@ -56,14 +56,16 @@ class GrpcService(CommServer):
 
             self.forward_lock.acquire(block=True)
             self.load_forward_buffer.append(data)
-            del self.forward_id_queue[0]
+            if len(self.forward_id_queue) > 0:
+                del self.forward_id_queue[0]
             self.forward_lock.release()
 
         elif buffer_type == 'backward':
 
             self.backward_lock.acquire(block=True)
             self.load_backward_buffer.append(data)
-            del self.backward_id_queue[0]
+            if len(self.backward_id_queue) > 0:
+                del self.backward_id_queue[0]
             self.backward_lock.release()
             
         return SendTensorReply(reply=True)
@@ -152,6 +154,4 @@ class GrpcService(CommServer):
         send_dict = {k:latest_state_dict[k] for k in state_dict_keys[key_start_index:key_end_index+1]}
         self.latest_weights_lock.release()
         return generate_weights_stream(send_dict)
-    
-    def Ping(self, request:PingRequest, context) -> PingResponse:
-        return PingResponse(data="Pong")
+        

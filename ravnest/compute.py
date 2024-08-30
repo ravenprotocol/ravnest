@@ -8,8 +8,7 @@ torch.backends.cudnn.benchmark = False
 torch.jit.set_fusion_strategy([('STATIC',0), ('DYNAMIC', 0)])
 
 class Compute():
-    def __init__(self, model = None, optimizer = None, 
-                criterion = None, compression = False,
+    def __init__(self, model = None, optimizer = None, compression = False,
                 latest_weights_buffer=None, latest_weights_lock=None,
                 input_tensors = None, tensor_id = None, 
                 output_template = None, input_template = None,
@@ -17,7 +16,6 @@ class Compute():
                 submod_file = None, loss_filename = None, device = None):
         self.model = model
         self.optimizer = optimizer
-        self.criterion = criterion
         self.compression = compression
         self.input_tensors = input_tensors
         self.current_version = 0
@@ -125,8 +123,6 @@ class Compute():
         self.fpid_to_version[forward_pass_id] = self.current_version
 
         print('\nVersion to fpid in forward: ', self.version_to_fpid)
-
-
         return output
 
     def num_grad_enabled_output_tensors(self):
