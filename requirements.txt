@@ -1,9 +1,9 @@
 grpcio==1.51.3
 grpcio-tools==1.51.3
-numpy==1.26.4
+numpy
 protobuf==4.24.4
-scikit_learn==1.1.1
-torch==2.2.0
+scikit_learn
+torch
 torchvision
 torchpippy==0.2.0
 packaging
