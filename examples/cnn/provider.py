@@ -26,8 +26,8 @@ def preprocess_dataset():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=1)
 
     # Reshape X to (n_samples, channels, height, width)
-    X_train = X_train.reshape((-1, 1, 8, 8))
-    X_test = X_test.reshape((-1, 1, 8, 8))
+    X_train = X_train.reshape((-1, 1, 8, 8)).astype(np.float32)
+    X_test = X_test.reshape((-1, 1, 8, 8)).astype(np.float32)
 
     generator = torch.Generator()
     generator.manual_seed(42)
@@ -38,7 +38,7 @@ def preprocess_dataset():
     return train_loader, val_loader
 
 def loss_fn(preds, targets):
-    return torch.nn.functional.mse_loss(preds, targets[1])
+    return torch.nn.functional.mse_loss(preds, targets)
 
 def accuracy_fn(preds, y_test):
     _, y_pred_tags = torch.max(preds, dim=1)
@@ -49,6 +49,8 @@ def accuracy_fn(preds, y_test):
     val_acc = correct_pred.sum() / len(y_test)
     val_acc = torch.round(val_acc * 100)
     return val_acc
+
+# train_loader, val_loader = preprocess_dataset()
 
 if __name__ == '__main__':
 

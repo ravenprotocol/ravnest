@@ -16,6 +16,8 @@ from .endpoints import GrpcService
 from .globals import g
 
 from .protos.server_pb2_grpc import add_CommServerServicer_to_server
+from .protos.server_pb2_grpc import CommServerStub
+from .protos.server_pb2 import CheckBufferStatus
 
 mp = multiprocessing.get_context('spawn')
 
@@ -106,10 +108,10 @@ class Node():
             for ring_id, _ in self.ring_ids.items():
                 self.reduce_iteration[ring_id] = 0
                 self.gather_iteration[ring_id] = 0
-            print('ring ids: ', self.ring_ids)
+            # print('ring ids: ', self.ring_ids)
 
         self.rank = kwargs.get('rank', None)
-        print('\n Rank: ', self.rank)
+        # print('\n Rank: ', self.rank)
         self.ring_size = kwargs.get('ring_size', None)
         
         self.ring_param_keys = {}
@@ -125,7 +127,7 @@ class Node():
         self.param_address_mapping = {}
         param_addresses = kwargs.get('param_addresses', None)
         self.retrieve_latest_params_data = {}
-        print(param_addresses)
+        # print(param_addresses)
         for i, address_to_param in enumerate(param_addresses.items()):
             if i < len(param_addresses) - 1:
                 keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):data_dict_keys.index(param_addresses[list(param_addresses.keys())[i+1]])]
@@ -137,7 +139,7 @@ class Node():
             for param_name in keys:
                 self.param_address_mapping[param_name] = address_to_param[0]
 
-        print('Ring param keys: ', self.ring_param_keys.keys())
+        # print('Ring param keys: ', self.ring_param_keys.keys())
         # print('Param address mapping: ', self.param_address_mapping)
         # print('State dict: ', self.model.state_dict().keys())
 
@@ -265,7 +267,7 @@ class Node():
             forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, 
             gather_lock=gather_lock,latest_weights_lock=latest_weights_lock,
             reduce_iteration = reduce_iteration, gather_iteration = gather_iteration), self.server)
-        print('Length of forward buffer: ', len(load_backward_buffer), os.getpid())
+        # print('Length of forward buffer: ', len(load_backward_buffer), os.getpid())
 
 
     def grpc_server_serve(self):
@@ -290,13 +292,13 @@ class Node():
         Spawns a process for serving gRPC requests and starts a thread
         for checking and processing incoming data buffers.
         """
-        print('Main process: ', os.getpid())
+        # print('Main process: ', os.getpid())
         serve_process = mp.Process(target=self.grpc_server_serve, daemon=True)
         serve_process.start()
 
         while not self.start_server_flag.value:
             time.sleep(0.5)
-        print('started')
+        # print('started')
 
     def check_forward_buffer(self):
         monitor_flag_break = False
@@ -307,7 +309,7 @@ class Node():
             del self.load_forward_buffer[0]
             self.forward_lock.release()
             action = value['action']
-            print('\n', action)
+            # print('\n', action, ' Popped from forward buffer')
             if action == ActionTypes.FORWARD:
                 if self.node_type == NodeTypes.LEAF:
                     action = 'leaf_forward'#ActionTypes.FIND_LOSS
@@ -342,6 +344,7 @@ class Node():
             value = self.load_backward_buffer[0]
             del self.load_backward_buffer[0]
             self.backward_lock.release()
+            # print('Popped in backward buffer')
             action = value['action']
 
             if action == ActionTypes.BACKWARD:
@@ -380,12 +383,15 @@ class Node():
     
     def backward(self, loss=None):
         if self.node_type == NodeTypes.ROOT or self.node_type == NodeTypes.STEM:
-            self.check_backward_buffer()
+            self.backward_monitor_flag = self.check_backward_buffer()
         elif self.node_type == NodeTypes.LEAF:
             self.leaf_backward_compute(loss)
+            self.backward_monitor_flag = True
+        # print('Version to param: ', print(self.compute_session.version_to_param.keys()))
         self.join_send_threads()
 
     def no_grad_forward(self, tensors=None, **kwargs):
+        
         outputs = None
         if self.node_type == NodeTypes.ROOT:
             self.no_grad_forward_compute(tensors, **kwargs)
@@ -418,18 +424,18 @@ class Node():
 
         self.node_status = NodeStatus.FORWARD
 
-        print('Before Root Forward: ')
-        check_gpu_usage()
+        # print('Before Root Forward: ')
+        # check_gpu_usage()
         output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **modified_kwargs)
-        print('After Root Forward: ')
-        check_gpu_usage()
+        # print('After Root Forward: ')
+        # check_gpu_usage()
 
         payload = self.comm_session.create_forward_payload(output, tensors=tensors)
 
         final_payload = {}
         final_payload[self.submod_file] = payload
 
-        print('Forward compute done for: ', self.forward_pass_id)
+        # print('Forward compute done for: ', self.forward_pass_id)
         self.n_forwards += 1
 
         if self.n_forwards - self.latest_backward_id > (self.cluster_length - 1):
@@ -440,7 +446,8 @@ class Node():
                     'data': final_payload,
                     'steady_state':self.steady_state,
                     'action': ActionTypes.FORWARD}
-        self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        # self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        self.trigger_send(sent_data, type=ActionTypes.FORWARD)
         self.forward_pass_id += 1
         g.forward_done = True
         self.root_compute = True
@@ -463,7 +470,8 @@ class Node():
                     'data':gradients, 
                     'forward_pass_id':self.forward_pass_id,
                     }
-        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+        # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+        t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.BACKWARD,))
         self.send_threads.append(t)
         t.start()
 
@@ -471,11 +479,18 @@ class Node():
         self.n_backwards += 1
         # print('N_backwards: ', self.n_backwards)
 
-        if self.n_backwards % self.reduce_threshold == 0:
-            # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
+        # if self.n_backwards % self.reduce_threshold == 0:
+        #     # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
 
-            self.comm_session.parallel_ring_reduce()
-            # print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
+        #     self.comm_session.parallel_ring_reduce()
+        #     # print('\nAVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#[list(self.compute_session.model.state_dict().keys())[0]])
+
+        #     if self.version_to_fpid.get(self.current_version, None) is None:
+        #         if self.current_version in self.version_to_param:
+        #             del self.version_to_param[self.current_version]
+
+        #     self.current_version += 1
+        #     self.update_model_version()
 
         # if self.device.type == 'cuda':
         #     # print('Sync')
@@ -512,17 +527,18 @@ class Node():
                         'data': final_payload,
                         'action': ActionTypes.NO_GRAD_FORWARD,
                     }
-        self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
-        print('No Grad forward compute done')
+        # self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        self.trigger_send(sent_data, type=ActionTypes.FORWARD)
+        # print('No Grad forward compute done')
         self.node_status = NodeStatus.IDLE
 
     def stem_forward(self, value):
-        print('n_backwards in FORWARD: ', self.n_backwards)
+        # print('n_backwards in FORWARD: ', self.n_backwards)
         self.node_status = NodeStatus.FORWARD
         data = value['data']
         forward_pass_id = value['forward_pass_id']
         self.steady_state = value['steady_state']
-        print('Start of forward: ', forward_pass_id)
+        # print('Start of forward: ', forward_pass_id)
         
         output = self.compute_session.middle_forward_compute(data, forward_pass_id=forward_pass_id)
 
@@ -534,16 +550,17 @@ class Node():
         sent_data = {'forward_pass_id':forward_pass_id,
                     'data': final_payload,
                     'action': ActionTypes.FORWARD}
-        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD,))
         self.send_threads.append(t)
         t.start()
         self.n_forwards += 1
-        print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
+        # print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
 
     def stem_no_grad_forward(self, value):
         # self.comm_session.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
-        print('No grad forward')
+        # print('No grad forward')
         data = value['data']
         output = self.compute_session.middle_no_grad_forward_compute(data)
         payload = self.comm_session.create_no_grad_forward_payload(output)
@@ -555,7 +572,8 @@ class Node():
                         'data': final_payload,
                         'action': ActionTypes.NO_GRAD_FORWARD, #value['output_type']                                            
                     }
-        t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD,))
         self.send_threads.append(t)
         t.start()
 
@@ -565,7 +583,7 @@ class Node():
         forward_pass_id = value['forward_pass_id']
 
         self.latest_backward_id = forward_pass_id
-        print('Start of backward: ', forward_pass_id)
+        # print('Start of backward: ', forward_pass_id)
 
         pass_grad_keys = self.compute_session.middle_backward_compute(gradient_dict, forward_pass_id)
 
@@ -582,33 +600,65 @@ class Node():
                         'forward_pass_id':forward_pass_id, 
                         'data':gradients
                         }
-            t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+            # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.BACKWARD, self.backward_target_host, self.backward_target_port,))
+            t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.BACKWARD,))
             self.send_threads.append(t)
             t.start()
             
         if self.input_tensors.get(forward_pass_id, None) is not None:
             del self.input_tensors[forward_pass_id]
 
-        print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
+        # print('Backward done, Used RAM %: ', psutil.virtual_memory().percent)
         self.n_backwards += 1
 
     def optimizer_step(self):
-        self.compute_session.optimizer_step()
+        if self.backward_monitor_flag:
+            self.compute_session.optimizer_step()
         if self.n_backwards % self.reduce_threshold == 0:
             # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])
             self.comm_session.parallel_ring_reduce()
+            if self.ring_size > 1 and self.node_type != NodeTypes.LEAF:
+                if self.version_to_fpid.get(self.current_version, None) is None:
+                    if self.compute_session.current_version in self.compute_session.version_to_param:
+                        del self.compute_session.version_to_param[self.current_version]
+
+                self.compute_session.current_version += 1
+                self.compute_session.update_model_version()
+
 
     def dist_func(self, fn, args=(), kwargs={}):
         if self.node_type == NodeTypes.LEAF:
             return fn(*args, **kwargs)
         return None
+    
+    def trigger_send(self, data, type=None):
+        # with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        # print('Forward and backward buffer lengths: ', len(self.load_forward_buffer), len(self.load_backward_buffer))
+        with self.comm_session.comm_channel_context(type=type) as channel:
+            stub = CommServerStub(channel)
+
+            send_flag = False
+            # print('Send trigger started', type)
+            while not send_flag:
+                buffer_status = stub.buffer_status(CheckBufferStatus(name=self.name, type=type))
+                
+                if buffer_status.status == BufferStatus.SEND_BUFFER:
+                    send_flag = True
+                else:
+                    if self.node_type == NodeTypes.ROOT:
+                        self.check_backward_buffer()
+                        # print('Root check backward')
+                
+            response = stub.send_buffer(generate_stream(data, type=type))
+            # print('Send trigger finished', type)
 
     def save_submodel(self, value):
         script = torch.jit.script(self.model)
         script.save('{}/{}.pt'.format(self.template_path, self.submod_file))
         os.remove('{}/submod.pt'.format(self.template_path))
         if self.node_type != NodeTypes.LEAF:
-            t = Thread(target=self.comm_session.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+            # t = Thread(target=self.comm_session.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+            t = Thread(target=self.trigger_send, args=({'action': ActionTypes.SAVE_SUBMODEL}, ActionTypes.FORWARD,))
             self.send_threads.append(t)
             t.start()                        
         print('SAVE done')
@@ -635,7 +685,8 @@ class Node():
         os.makedirs(self.template_path, exist_ok=True)
         script.save('{}/{}.pt'.format(self.template_path,self.submod_file))
         os.remove('{}/submod.pt'.format(self.template_path))
-        self.comm_session.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        # self.comm_session.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
+        self.trigger_send({'action': ActionTypes.SAVE_SUBMODEL}, type=ActionTypes.FORWARD)
         print('SAVE done')
 
     def update_with_latest_weights(self):

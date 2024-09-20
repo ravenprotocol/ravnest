@@ -2,6 +2,7 @@ import grpc
 from threading import Thread
 import psutil
 import torch
+from contextlib import contextmanager
 from .utils import *
 from .strings import *
 from .protos.server_pb2_grpc import CommServerStub
@@ -64,17 +65,29 @@ class Communication():
         self.model_inputs_template = model_inputs_template
 
 
-    def trigger_send(self, data, type=None, target_host=None, target_port=None):
-        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
-            stub = CommServerStub(channel)
+    # def trigger_send(self, data, type=None, target_host=None, target_port=None):
+    #     with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+    #         stub = CommServerStub(channel)
 
-            send_flag = False
-            while not send_flag:
-                buffer_status = stub.buffer_status(CheckBufferStatus(name=self.name, type=type))
+    #         send_flag = False
+    #         while not send_flag:
+    #             buffer_status = stub.buffer_status(CheckBufferStatus(name=self.name, type=type))
                 
-                if buffer_status.status == BufferStatus.SEND_BUFFER:
-                    send_flag = True
-            response = stub.send_buffer(generate_stream(data, type=type))
+    #             if buffer_status.status == BufferStatus.SEND_BUFFER:
+    #                 send_flag = True
+    #         response = stub.send_buffer(generate_stream(data, type=type))
+
+    @contextmanager
+    def comm_channel_context(self, type=None, host=None, port=None):
+        if type == ActionTypes.FORWARD:
+            with grpc.insecure_channel('{}:{}'.format(self.forward_target_host, self.forward_target_port)) as channel:
+                yield channel
+        elif type == ActionTypes.BACKWARD:
+            with grpc.insecure_channel('{}:{}'.format(self.backward_target_host, self.backward_target_port)) as channel:
+                yield channel
+        else:
+            with grpc.insecure_channel('{}:{}'.format(host, port)) as channel:
+                yield channel
     
     def create_backward_payload(self, forward_pass_id=None, model_args=None):        
         grad_payload = {}
@@ -124,7 +137,7 @@ class Communication():
 
     def parallel_ring_reduce(self):
         if self.ring_size > 1:
-            print('\nBegining Parameter Averaging')
+            # print('\nBegining Parameter Averaging')
             threads = []
             for ring_id, _ in self.ring_ids.items():
                 # ring_data = {k:self.model.state_dict()[k] for k in self.ring_param_keys[ring_id]}
@@ -154,7 +167,7 @@ class Communication():
                 load_optim_state(self.optimizer, self.averaged_optim_params_buffer, self.model)
                 self.averaged_optim_params_buffer = {}
             self.average_no += 1 
-            print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
+            # print('\nParameter Averaging Complete: ', self.average_no, ' Used RAM %: ', psutil.virtual_memory().percent)
             # print('Averaged state_dict: ', self.model.state_dict())
 
     @torch.no_grad()
@@ -167,8 +180,8 @@ class Communication():
         send_pos = (self.rank)%self.ring_size
 
         for i in range(iterations):
-            print('Send pos: ', send_pos)
-            print(' RIng size: ', self.ring_size)
+            # print('Send pos: ', send_pos)
+            # print(' RIng size: ', self.ring_size)
             address_send_data_mapping = {}
             for id, chunks in chunked_data.items():
                 dest = self.param_address_mapping[id]
@@ -211,7 +224,7 @@ class Communication():
             self.reduce_iteration[ring_id] += 1
 
         self.reduce_iteration[ring_id] = 0
-        print('Reduced Ring id: ', ring_id)
+        # print('Reduced Ring id: ', ring_id)
 
         send_pos = (recv_pos+1)%self.ring_size
         recv_pos = ((send_pos - 1)+self.ring_size)%self.ring_size
@@ -271,7 +284,7 @@ class Communication():
                         reduced_tensor = reduced_tensor.reshape(())
                     chunked_optim_data[param][state_param] = reduced_tensor.to(self.device)#torch.cat(state['data'], dim=state['split_axis']).div(self.ring_size).to(self.device)
 
-        print('Gathered Ring id: ', ring_id)
+        # print('Gathered Ring id: ', ring_id)
         self.averaged_params_buffer.update(chunked_data)
         if self.average_optim:
             self.averaged_optim_params_buffer.update(chunked_optim_data)
@@ -290,7 +303,8 @@ class Communication():
         return total_state_dict
 
     def send_reduce_chunk(self, target_host, target_port, data_dict, ring_id):
-        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        # with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        with self.comm_channel_context(host=target_host, port=target_port) as channel:
             stub = CommServerStub(channel)
             while True:
                 iteration_resp = stub.reduce_iteration(CheckReduceIteration(ring_id=ring_id))
@@ -299,7 +313,8 @@ class Communication():
             response = stub.reduce_chunk(generate_data_stream(data_dict, ring_id=ring_id))
 
     def send_gather_chunk(self, target_host, target_port, data_dict, ring_id):
-        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        # with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        with self.comm_channel_context(host=target_host, port=target_port) as channel:
             stub = CommServerStub(channel)
             while True:
                 iteration_resp = stub.gather_iteration(CheckGatherIteration(ring_id=ring_id))
@@ -308,7 +323,8 @@ class Communication():
             response = stub.gather_chunk(generate_data_stream(data_dict, ring_id=ring_id))
 
     def send_latest_weights_request(self, target_host, target_port, param_names, total_state_dict):
-        with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        # with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
+        with self.comm_channel_context(host=target_host, port=target_port) as channel:
             stub = CommServerStub(channel)
             param_names = cPickle.dumps(param_names)
             response = stub.get_latest_weights(SendLatestWeights(param_names=param_names))

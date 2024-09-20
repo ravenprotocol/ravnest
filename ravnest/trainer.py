@@ -202,8 +202,8 @@ class BaseTrainerFullAsync():
     def train_step(self, x, y):
         outputs = self.node.forward(x)
         loss = self.node.dist_func(self.loss_fn, args=(outputs, y))
-        if self.node.node_type == NodeTypes.LEAF:
-            print('Loss: ', loss)
+        # if self.node.node_type == NodeTypes.LEAF:
+        #     print('Loss: ', loss)
         self.node.backward(loss)
 
         if self.node.n_backwards % self.update_frequency == 0:
@@ -222,52 +222,52 @@ class BaseTrainerFullAsync():
         t1 = time.time()
         for epoch in range(self.epochs):
             self.node.model.train()
+            t2 = time.time()
             for X_train, y_train in self.train_loader:
-                # outputs = self.node.forward(X_train)
-                # loss = self.node.dist_func(self.loss_fn, args=(outputs, y_train))
-                # if self.node.node_type == NodeTypes.LEAF:
-                #     print('Loss: ', loss)
-                # self.node.backward(loss)
-
-                # if self.node.n_backwards % self.update_frequency == 0:
-                #     self.node.optimizer_step()
-                #     self.node.model.zero_grad()
-                #     self.node.optimizer.zero_grad()
                 self.train_step(X_train, y_train)
             
-            if self.val_loader is not None: 
-                self.node.model.eval()
-                acc = 0
-                for X_test, y_test in self.val_loader:
-                    output = self.node.no_grad_forward(X_test)
-                    accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
-                    if self.node.node_type == NodeTypes.LEAF:
-                        acc += accuracy.numpy()
-                if self.node.node_type == NodeTypes.LEAF:
-                    print('Accuracy: ', acc/len(self.val_loader))
+            self.await_backwards()
 
+            # if self.val_loader is not None: 
+            #     # self.await_backwards()
+            #     self.node.model.eval()
+            #     acc = 0
+            #     for X_test, y_test in self.val_loader:
+            #         # self.await_one_backward()
+            #         # self.node.model.eval()
+            #         output = self.node.no_grad_forward(X_test)
+            #         accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
+            #         if self.node.node_type == NodeTypes.LEAF:
+            #             acc += accuracy.numpy()
+            #     if self.node.node_type == NodeTypes.LEAF:
+            #         print('Accuracy: ', acc/len(self.val_loader))
+            
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
-            print('Epoch: ', epoch)
+            print('Epoch: ', epoch, ' time taken: ', time.time() - t2)
 
         self.node.model.train()
         self.await_backwards()
+        print('Training Done!: ', time.time() - t1, ' seconds')
         
         self.node.comm_session.parallel_ring_reduce()
-        print('Training Done!: ', time.time() - t1, ' seconds')
+        # print('Training Done!: ', time.time() - t1, ' seconds')
 
         if self.save:
             self.node.trigger_save_submodel()
     
     def await_backwards(self):
         while self.node.n_backwards < self.node.n_forwards:
-            if self.node.node_type != NodeTypes.LEAF:
-                self.node.backward()
-                if self.node.n_backwards % self.update_frequency == 0:
-                    self.node.optimizer_step()
-                    self.node.model.zero_grad()
-                    self.node.optimizer.zero_grad()   
+            self.await_one_backward()
 
+    def await_one_backward(self):
+        if self.node.node_type != NodeTypes.LEAF:
+            self.node.backward()
+            if self.node.n_backwards % self.update_frequency == 0:
+                self.node.optimizer_step()
+                self.node.model.zero_grad()
+                self.node.optimizer.zero_grad()  
+    
     def pred(self, data):
         """Perform prediction on sample test data using the trained model.
 

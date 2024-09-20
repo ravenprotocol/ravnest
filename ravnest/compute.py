@@ -35,6 +35,7 @@ class Compute():
         self.device = device
         self.recompute_thread = None
         self.file_loss = 0
+        self.version_update_lock = threading.Lock()
         # self.recompute_stream = torch.cuda.Stream(self.device)
         # self.version_to_param[self.current_version] = self.get_params_clone()
         # self.latest_weights_lock.acquire(block=True)
@@ -43,13 +44,19 @@ class Compute():
         self.update_model_version()
 
     def update_model_version(self):
+        # self.latest_weights_lock.acquire(block=True)
+        # self.version_update_lock.acquire(blocking=True)
         self.version_to_param[self.current_version] = self.get_params_clone()
-        self.latest_weights_lock.acquire(block=True)
-        self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
-        self.latest_weights_lock.release()
+        # self.version_update_lock.release()
+        # print('\n Updated model version as well')
+
+        
+        # self.latest_weights_lock.acquire(block=True)
+        # self.latest_weights_buffer['state_dict'] = self.version_to_param[self.current_version]
+        # self.latest_weights_lock.release()
 
     def root_forward_compute(self, tensors, forward_pass_id, **kwargs):
-        print('Is training: ', self.model.training)
+        # print('Is training: ', self.model.training)
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
@@ -87,11 +94,11 @@ class Compute():
             self.version_to_fpid[self.current_version] = [forward_pass_id]
         
         self.fpid_to_version[forward_pass_id] = self.current_version
-        print('Forward done for: ', forward_pass_id)
+        # print('Forward done for: ', forward_pass_id)
         return output
 
     def middle_forward_compute(self, data, forward_pass_id):
-        print('Is training: ', self.model.training)
+        # print('Is training: ', self.model.training)
 
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
@@ -102,7 +109,7 @@ class Compute():
         # if not self.model.training:
         #     self.model.train()
 
-        print('Middle Forward fpid: ',forward_pass_id)
+        # print('Middle Forward fpid: ',forward_pass_id)
         model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.STEM)
 
         rng_state_cpu = torch.get_rng_state()
@@ -122,7 +129,7 @@ class Compute():
         
         self.fpid_to_version[forward_pass_id] = self.current_version
 
-        print('\nVersion to fpid in forward: ', self.version_to_fpid)
+        # print('\nVersion to fpid in forward: ', self.version_to_fpid)
         return output
 
     def num_grad_enabled_output_tensors(self):
@@ -142,13 +149,13 @@ class Compute():
         # torch.cuda.synchronize()
 
         if self.fpid_to_version.get(forward_pass_id, None) is not None:
-            print('Blocking recompute for: ', forward_pass_id)
+            # print('Blocking recompute for: ', forward_pass_id)
             self.recompute_forward(forward_pass_id)
 
         # self.model.zero_grad()
         # self.optimizer.zero_grad()
-        print('Before Backward: ')
-        check_gpu_usage()
+        # print('Before Backward: ')
+        # check_gpu_usage()
 
         pass_grad_keys = []
         # print('Gradient dict: ', gradient_dict.keys())
@@ -179,14 +186,14 @@ class Compute():
 
         torch.autograd.backward(leaf_output_tensors, backward_grads)
 
-        print('\nVersion to fpid in backward: ', self.version_to_fpid)
+        # print('\nVersion to fpid in backward: ', self.version_to_fpid)
         # if self.version_to_fpid.get(self.current_version, None) is None:
         #     if self.current_version in self.version_to_param:
         #         del self.version_to_param[self.current_version]
         #         print('Deleted param version: ', self.current_version)
 
-        print('After Backward: ')
-        check_gpu_usage()
+        # print('After Backward: ')
+        # check_gpu_usage()
 
         if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
             self.recompute_thread = threading.Thread(target=self.recompute_forward, args=(forward_pass_id+1,))
@@ -199,8 +206,8 @@ class Compute():
         return pass_grad_keys
 
     def recompute_forward(self, forward_pass_id):
-        print('Before Recompute: ')
-        check_gpu_usage()
+        # print('Before Recompute: ')
+        # check_gpu_usage()
 
         recompute_version = self.fpid_to_version[forward_pass_id]
         del self.fpid_to_version[forward_pass_id]
@@ -244,30 +251,35 @@ class Compute():
             
             self.output_tensors[self.tensor_id] = out
             self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
-
+        
+        # print('\nReloading in recompute to: ', self.current_version)
+        self.version_update_lock.acquire(blocking=True)
         load_state_dict_conserve_versions(self.model, self.version_to_param[self.current_version])
+        self.version_update_lock.release()
 
         self.version_to_fpid[recompute_version].remove(forward_pass_id)
         if len(self.version_to_fpid[recompute_version]) == 0:
-            print('Deleting in recompute: Recompute version ', recompute_version)
+            # print('Deleting in recompute: Recompute version ', recompute_version)
             del self.version_to_param[recompute_version]
             del self.version_to_fpid[recompute_version]
-        print('Recompute done for: ', forward_pass_id)
 
-        print('After Recompute: ')
-        check_gpu_usage()
+        # print(self.version_to_param.keys())
+        # print('Recompute done for: ', forward_pass_id)
+
+        # print('After Recompute: ')
+        # check_gpu_usage()
 
     def leaf_backward(self, loss):
 
-        print('Before backward GPU: ')
-        check_gpu_usage()
+        # print('Before backward GPU: ')
+        # check_gpu_usage()
         loss.backward()
 
-        print('After backward GPU: ')
-        check_gpu_usage()
+        # print('After backward GPU: ')
+        # check_gpu_usage()
     
     def leaf_forward(self, data):
-        print('Is training: ', self.model.training)
+        # print('Is training: ', self.model.training)
         model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
         
         # if not self.model.training:
@@ -279,7 +291,7 @@ class Compute():
 
     def root_no_grad_forward_compute(self, tensors=None, **kwargs):
         # self.model.eval()
-        print('Is training: ', self.model.training)
+        # print('Is training: ', self.model.training)
         with torch.no_grad():
             if tensors is not None:
                 output = self.model(tensors, **kwargs)
@@ -288,7 +300,7 @@ class Compute():
         return output
 
     def middle_no_grad_forward_compute(self, data):
-        print('Is training: ', self.model.training)
+        # print('Is training: ', self.model.training)
 
         model_args = self.create_no_grad_model_args(data)
         
@@ -299,7 +311,7 @@ class Compute():
         return output
     
     def leaf_no_grad_forward(self, data):
-        print('Is training: ', self.model.training)
+        # print('Is training: ', self.model.training)
 
         model_args = self.create_no_grad_model_args(data)
         # self.model.eval()
@@ -315,8 +327,18 @@ class Compute():
             self.optimizer.step()
             load_optim_weights_into_model(self.model, self.optimizer)
 
+            # if self.version_to_fpid.get(self.current_version, None) is None:
+            #     if self.current_version in self.version_to_param:
+            #         del self.version_to_param[self.current_version]
+
+            self.version_update_lock.acquire(blocking=True)
+            if self.version_to_fpid.get(self.current_version, None) is None:
+                if self.current_version in self.version_to_param:
+                    del self.version_to_param[self.current_version]
             self.current_version += 1
+            # print('\nUpdated self version but not model to: ', self.current_version)
             self.update_model_version()
+            self.version_update_lock.release()
 
     def create_model_args(self, data, forward_pass_id=None, node_type=None):
         if node_type != NodeTypes.LEAF:
@@ -531,17 +553,17 @@ class Compute():
             state_dict[key] = state_dict[key].clone()
         return state_dict
 
-def compare_models(d1, d2):
-    models_differ = 0
-    for key_item_1, key_item_2 in zip(d1.items(), d2.items()):
-        if torch.equal(key_item_1[1], key_item_2[1]):
-            pass
-        else:
-            models_differ += 1
-            if (key_item_1[0] == key_item_2[0]):
-                print('Mismtach found at', key_item_1[0])
-                break
-            else:
-                raise Exception
-    if models_differ == 0:
-        print('Models match perfectly! :)')
+# def compare_models(d1, d2):
+#     models_differ = 0
+#     for key_item_1, key_item_2 in zip(d1.items(), d2.items()):
+#         if torch.equal(key_item_1[1], key_item_2[1]):
+#             pass
+#         else:
+#             models_differ += 1
+#             if (key_item_1[0] == key_item_2[0]):
+#                 print('Mismtach found at', key_item_1[0])
+#                 break
+#             else:
+#                 raise Exception
+#     if models_differ == 0:
+#         print('Models match perfectly! :)')

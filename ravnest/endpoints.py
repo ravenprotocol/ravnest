@@ -53,17 +53,19 @@ class GrpcService(CommServer):
         data = cPickle.loads(accumulated_tensor_buffer)
 
         if buffer_type == 'forward':
-
+            
             self.forward_lock.acquire(block=True)
             self.load_forward_buffer.append(data)
             if len(self.forward_id_queue) > 0:
                 del self.forward_id_queue[0]
             self.forward_lock.release()
+            # print('Added to forward buffer')
 
         elif buffer_type == 'backward':
 
             self.backward_lock.acquire(block=True)
             self.load_backward_buffer.append(data)
+            # print('Appended in backward')
             if len(self.backward_id_queue) > 0:
                 del self.backward_id_queue[0]
             self.backward_lock.release()
@@ -76,7 +78,6 @@ class GrpcService(CommServer):
         node_type = request.type
 
         if node_type == 'forward':
-
             if incoming_node not in self.forward_id_queue:
                 self.forward_id_queue.append(incoming_node)
             if len(self.load_forward_buffer) == 0 and self.forward_id_queue[0] == incoming_node:
