@@ -1,7 +1,7 @@
 import torch
 import setuptools
 import pickle
-from pip._internal.operations.freeze import freeze
+# from pip._internal.operations.freeze import freeze
 
 from torch.fx import Tracer
 from pippy.IR import Pipe
