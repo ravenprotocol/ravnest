@@ -1,9 +1,11 @@
 import numpy as np
+import time
 import torch
 from torch.utils.data import DataLoader
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
-from ravnest import Node, set_seed
+from ravnest import set_seed #Node,
+from ravnest.node_tcp import Node
 from ravnest.trainer import BaseTrainerFullAsync#Trainer
 
 set_seed(42)
@@ -23,7 +25,7 @@ def preprocess_dataset():
     # Convert to one-hot encoding
     y = to_categorical(y.astype("int"))
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=1)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=42)
 
     # Reshape X to (n_samples, channels, height, width)
     X_train = X_train.reshape((-1, 1, 8, 8)).astype(np.float32)
@@ -32,9 +34,9 @@ def preprocess_dataset():
     generator = torch.Generator()
     generator.manual_seed(42)
 
-    train_loader = DataLoader(list(zip(X_train,torch.tensor(y_train, dtype=torch.float32))), generator=generator, shuffle=True, batch_size=64)
+    train_loader = DataLoader(list(zip(X_train,torch.tensor(y_train, dtype=torch.float32))), generator=generator, shuffle=True, batch_size=64, drop_last=True)
     val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
-
+    
     return train_loader, val_loader
 
 def loss_fn(preds, targets):
@@ -62,8 +64,9 @@ if __name__ == '__main__':
                 criterion = loss_fn,
                 labels = train_loader,
                 test_labels=val_loader,
+                backend='gloo',
                 # reduce_factor=4,
-                average_optim=True
+                average_optim=True,
                 )
 
     trainer = BaseTrainerFullAsync(node=node,
@@ -79,4 +82,6 @@ if __name__ == '__main__':
 
     trainer.train()
 
-    trainer.evaluate()
+    # trainer.evaluate()
+
+# torchrun --nnodes=2 --nproc_per_node=1 --node_rank=0 --rdzv-id=1 --rdzv-backend=static --master_addr=localhost --master_port=29500 examples/cnn/provider_0.py
