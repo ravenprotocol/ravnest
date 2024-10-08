@@ -1,5 +1,6 @@
 import copy
 import threading
+import time
 from .utils import *
 from .strings import *
 
@@ -12,7 +13,7 @@ class Compute():
                 latest_weights_buffer=None, latest_weights_lock=None,
                 input_tensors = None, tensor_id = None, 
                 output_template = None, input_template = None,
-                node_type=None,
+                node_type=None, backend='grpc',
                 submod_file = None, loss_filename = None, device = None):
         self.model = model
         self.optimizer = optimizer
@@ -32,6 +33,7 @@ class Compute():
         self.output_template = output_template
         self.input_template = input_template
         self.node_type = node_type
+        self.backend = backend
         self.device = device
         self.recompute_thread = None
         self.file_loss = 0
@@ -57,10 +59,12 @@ class Compute():
 
     def root_forward_compute(self, tensors, forward_pass_id, **kwargs):
         # print('Is training: ', self.model.training)
+        # t1 = time.time()
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
-
+        
+        # t2 = time.time()
         # torch.cuda.synchronize()
 
         # if not self.model.training:
@@ -94,23 +98,29 @@ class Compute():
             self.version_to_fpid[self.current_version] = [forward_pass_id]
         
         self.fpid_to_version[forward_pass_id] = self.current_version
-        # print('Forward done for: ', forward_pass_id)
+        # print('Forward done for: ', forward_pass_id, ' total time: ', time.time() - t1, ' without recompute: ', time.time() - t2)
         return output
 
     def middle_forward_compute(self, data, forward_pass_id):
         # print('Is training: ', self.model.training)
-
+        # t1 = time.time()
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
 
+        # t2 = time.time()
         # torch.cuda.synchronize()
 
         # if not self.model.training:
         #     self.model.train()
 
         # print('Middle Forward fpid: ',forward_pass_id)
-        model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.STEM)
+        if self.backend == 'grpc':
+            model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.STEM)
+        else:
+            model_args = data
+            model_args.requires_grad_()
+            self.input_tensors[forward_pass_id] = data
 
         rng_state_cpu = torch.get_rng_state()
         rng_state_gpu = None
@@ -120,7 +130,10 @@ class Compute():
         self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
 
         with torch.no_grad():
-            output = self.model(*model_args)
+            if isinstance(model_args, torch.Tensor):
+                output = self.model(model_args)
+            else:    
+                output = self.model(*model_args)
 
         if self.version_to_fpid.get(self.current_version, None) is not None:
             self.version_to_fpid[self.current_version].append(forward_pass_id)
@@ -130,6 +143,7 @@ class Compute():
         self.fpid_to_version[forward_pass_id] = self.current_version
 
         # print('\nVersion to fpid in forward: ', self.version_to_fpid)
+        # print('Forward done for: ', forward_pass_id, ' total time: ', time.time() - t1, ' without recompute: ', time.time() - t2)
         return output
 
     def num_grad_enabled_output_tensors(self):
@@ -139,17 +153,19 @@ class Compute():
                 num_grad_enabled += 1
         return num_grad_enabled
 
-    def middle_backward_compute(self, gradient_dict, forward_pass_id):
+    def middle_backward_compute(self, gradient_data, forward_pass_id):
         # self.recompute_forward(forward_pass_id)
         # print('Gradient dict: ', gradient_dict)
+        # t1 = time.time()
         if self.recompute_thread is not None:
             if self.recompute_thread.is_alive():
                 self.recompute_thread.join()
 
         # torch.cuda.synchronize()
+        # t2 = time.time()
 
         if self.fpid_to_version.get(forward_pass_id, None) is not None:
-            # print('Blocking recompute for: ', forward_pass_id)
+            print('Manual recompute for: ', forward_pass_id)
             self.recompute_forward(forward_pass_id)
 
         # self.model.zero_grad()
@@ -161,29 +177,33 @@ class Compute():
         # print('Gradient dict: ', gradient_dict.keys())
         leaf_output_tensors = []
         backward_grads = []
-        for key, value in gradient_dict.items():
-            if self.output_tensors.get(key, None) is not None:
-                if self.output_tensors[key].grad_fn is not None:
-                    original_dtype = value['dtype']
-                    value = value['data']
-                    if self.compression:
-                        # print('Extracting grad: ', value.dtype)
-                        value = extract_tensor_from_compression_float16(value, original_dtype)
-                        # print('Extracted grad to: ', value.dtype)
-                    
-                    if value.device.type != self.device:
-                        value = value.to(self.device)
 
-                    output_tensor = self.output_tensors[key]
-                    leaf_output_tensors.append(output_tensor)
-                    backward_grads.append(value)
+        if self.backend == 'grpc':
+            for key, value in gradient_data.items():
+                if self.output_tensors.get(key, None) is not None:
+                    if self.output_tensors[key].grad_fn is not None:
+                        original_dtype = value['dtype']
+                        value = value['data']
+                        if self.compression:
+                            # print('Extracting grad: ', value.dtype)
+                            value = extract_tensor_from_compression_float16(value, original_dtype)
+                            # print('Extracted grad to: ', value.dtype)
+                        
+                        if value.device.type != self.device:
+                            value = value.to(self.device)
 
-                    del self.output_tensors[key]
+                        output_tensor = self.output_tensors[key]
+                        leaf_output_tensors.append(output_tensor)
+                        backward_grads.append(value)
+
+                        del self.output_tensors[key]
+                    else:
+                        del self.output_tensors[key]
                 else:
-                    del self.output_tensors[key]
-            else:
-                pass_grad_keys.append(key)
-
+                    pass_grad_keys.append(key)
+        else:
+            leaf_output_tensors = self.output_tensors
+            backward_grads = gradient_data
         torch.autograd.backward(leaf_output_tensors, backward_grads)
 
         # print('\nVersion to fpid in backward: ', self.version_to_fpid)
@@ -202,12 +222,14 @@ class Compute():
         # if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
         #     with torch.cuda.stream(self.recompute_stream): #self.recompute_stream
         #         self.recompute_forward(forward_pass_id+1)
+        # print('Backward time for: ', forward_pass_id, 'total backward ', time.time() - t1, ' Without recompute: ', time.time() - t2)
         
         return pass_grad_keys
 
     def recompute_forward(self, forward_pass_id):
         # print('Before Recompute: ')
         # check_gpu_usage()
+        # t1 = time.time()
 
         recompute_version = self.fpid_to_version[forward_pass_id]
         del self.fpid_to_version[forward_pass_id]
@@ -239,18 +261,27 @@ class Compute():
                 else:
                     output = self.model(self.input_tensors[forward_pass_id])
             else:
-                output = self.model(*self.get_model_args(forward_pass_id))
+                if self.backend == 'grpc':
+                    output = self.model(*self.get_model_args(forward_pass_id))
+                else:
+                    if isinstance(self.input_tensors[forward_pass_id], torch.Tensor):
+                        output = self.model(self.input_tensors[forward_pass_id])
+                    else:
+                        output = self.model(*self.input_tensors[forward_pass_id])
 
             # print('Inputs in recompute: ', self.input_tensors[forward_pass_id])
-
-        for k, v in self.output_template.items():
-            if isinstance(output, tuple):
-                out = output[k]
-            else:
-                out = output
-            
-            self.output_tensors[self.tensor_id] = out
-            self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
+        
+        if self.backend == 'grpc':
+            for k, v in self.output_template.items():
+                if isinstance(output, tuple):
+                    out = output[k]
+                else:
+                    out = output
+                
+                self.output_tensors[self.tensor_id] = out
+                self.tensor_id = str(int(self.tensor_id.split('_')[0]) + 1) + '_{}'.format(self.submod_file)
+        else:
+            self.output_tensors = output
         
         # print('\nReloading in recompute to: ', self.current_version)
         self.version_update_lock.acquire(blocking=True)
@@ -268,6 +299,7 @@ class Compute():
 
         # print('After Recompute: ')
         # check_gpu_usage()
+        # print('Recompute time for: ', forward_pass_id, time.time() - t1)
 
     def leaf_backward(self, loss):
 
@@ -280,12 +312,23 @@ class Compute():
     
     def leaf_forward(self, data):
         # print('Is training: ', self.model.training)
-        model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
+        if self.backend == 'grpc':
+            model_args = self.create_model_args(data, node_type=NodeTypes.LEAF)
+            outputs = self.model(*model_args.values())
+        else:
+            model_args = data
+            if isinstance(model_args, torch.Tensor):
+                model_args.requires_grad_()
+                outputs = self.model(model_args)
+            else:
+                outputs = self.model(*model_args)
+
         
         # if not self.model.training:
         #     self.model.train()
 
-        outputs = self.model(*model_args.values())
+
+        # outputs = self.model(*model_args.values())
 
         return model_args, outputs
 
@@ -360,7 +403,7 @@ class Compute():
                             #     data[k][arg_pos]['data'] = data[k][arg_pos]['data'].detach().clone().to(self.device)
                             #     data[k][arg_pos]['data'].requires_grad_()
 
-                            model_arg = data[k][arg_pos]['data'].detach().clone()
+                            model_arg = data[k][arg_pos]['data']#.detach().clone()
                             original_dtype = data[k][arg_pos]['dtype']
                             # print('Dtype in create args: ', original_dtype)
                             if self.compression:
@@ -393,7 +436,7 @@ class Compute():
                                 #     data[k][v]['data'] = data[k][v]['data'].detach().clone().to(self.device)
                                 #     data[k][v]['data'].requires_grad_()
 
-                                model_arg = data[k][v]['data'].detach().clone()
+                                model_arg = data[k][v]['data']#.detach().clone()
 
                                 original_dtype = data[k][arg_pos]['dtype']
                                 # print('Dtype in create args: ', original_dtype)
@@ -435,7 +478,7 @@ class Compute():
                             #     data[k][arg_pos]['data'] = data[k][arg_pos]['data'].detach().clone().to(self.device)    
                             #     data[k][arg_pos]['data'].requires_grad_() 
 
-                            model_arg = data[k][arg_pos]['data'].detach().clone()
+                            model_arg = data[k][arg_pos]['data']#.detach().clone()
 
                             original_dtype = data[k][arg_pos]['dtype']
                             # print('Dtype in create args: ', original_dtype)
@@ -468,7 +511,7 @@ class Compute():
                                 #     data[k][v]['data'] = data[k][v]['data'].detach().clone().to(self.device) 
                                 #     data[k][v]['data'].requires_grad_()  
 
-                                model_arg = data[k][v]['data'].detach().clone()
+                                model_arg = data[k][v]['data']#.detach().clone()
 
                                 original_dtype = data[k][arg_pos]['dtype']
                                 # print('Dtype in create args: ', original_dtype)
