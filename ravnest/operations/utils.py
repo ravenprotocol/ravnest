@@ -5,6 +5,7 @@ import pickle
 
 from torch.fx import Tracer
 from pippy.IR import Pipe
+# from torch.distributed.pipelining import Pipe
 from pippy import split_into_equal_size
 
 from .pippy_utils import split_on_proportions
@@ -456,8 +457,14 @@ def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False)
                         node_paths=cluster_node_ip_addresses,
                         model_input_node = model_input_node)
         
+    input_tensor = example_args[0]
     for node in node_pool:
         node.set_submodel()
+        output_tensor = node.submodel(input_tensor)
+        node.input_shape = input_tensor.shape
+        node.output_shape = output_tensor.shape
+        print('INPUT SHAPE: ', node.input_shape, 'OUTPUT SHAPE: ', node.output_shape)
+        input_tensor = output_tensor
         # print('\n Node id: ', node.node_id, ' params: ', node.submodel.state_dict().keys())
 
     max_c = None
@@ -532,6 +539,9 @@ def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False)
         node_meta['forward_target_port'] = int(node.forward_target_port) if node.forward_target_port is not None else None
         node_meta['backward_target_host'] = node.backward_target_host
         node_meta['backward_target_port'] = int(node.backward_target_port) if node.backward_target_port is not None else None
+
+        node_meta['input_shape'] = node.input_shape
+        node_meta['output_shape'] = node.output_shape
 
         if node_meta['forward_target_host'] is not None and node_meta['backward_target_host'] is None:
             node_meta['node_type'] = 'root'

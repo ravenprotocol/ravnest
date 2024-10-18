@@ -15,6 +15,8 @@ class Node:
         self.backward_target_host = None
         self.backward_target_port = None
         self.cluster_length = 1
+        self.input_shape = None
+        self.output_shape = None
 
     def set_submodel(self):
         self.submodel = torch.jit.load('node_data/cluster_{}/{}/submod.pt'.format(self.cluster_id, self.address))
