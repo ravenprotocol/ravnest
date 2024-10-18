@@ -244,8 +244,8 @@ class BaseTrainerFullAsync():
             
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
-            print('Epoch: ', epoch, ' time taken: ', time.time() - t2)
-
+            t_epoch = time.time() - t2
+            print('Epoch: ', epoch, ' time taken: ', t_epoch)
         self.node.model.train()
         self.await_backwards()
         print('Training Done!: ', time.time() - t1, ' seconds')

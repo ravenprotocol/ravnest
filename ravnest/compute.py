@@ -70,12 +70,12 @@ class Compute():
         # if not self.model.training:
         #     self.model.train()
 
-        rng_state_cpu = torch.get_rng_state()
-        rng_state_gpu = None
-        if self.device.type == 'cuda':
-            rng_state_gpu = torch.cuda.get_rng_state(self.device)
+        # rng_state_cpu = torch.get_rng_state()
+        # rng_state_gpu = None
+        # if self.device.type == 'cuda':
+        #     rng_state_gpu = torch.cuda.get_rng_state(self.device)
         
-        self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
+        # self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
 
         if len(kwargs) > 0:
             if tensors is not None:
@@ -86,11 +86,13 @@ class Compute():
         else:
             self.input_tensors[forward_pass_id] = tensors
 
-        with torch.no_grad():
-            if tensors is not None:
-                output = self.model(tensors, **kwargs)
-            else:
-                output = self.model(**kwargs)
+        # with torch.no_grad():
+        if tensors is not None:
+            output = self.model(tensors, **kwargs)
+        else:
+            output = self.model(**kwargs)
+        
+        self.output_tensors[forward_pass_id] = output
 
         if self.version_to_fpid.get(self.current_version, None) is not None:
             self.version_to_fpid[self.current_version].append(forward_pass_id)
@@ -104,9 +106,9 @@ class Compute():
     def middle_forward_compute(self, data, forward_pass_id):
         # print('Is training: ', self.model.training)
         # t1 = time.time()
-        if self.recompute_thread is not None:
-            if self.recompute_thread.is_alive():
-                self.recompute_thread.join()
+        # if self.recompute_thread is not None:
+        #     if self.recompute_thread.is_alive():
+        #         self.recompute_thread.join()
 
         # t2 = time.time()
         # torch.cuda.synchronize()
@@ -122,18 +124,20 @@ class Compute():
             model_args.requires_grad_()
             self.input_tensors[forward_pass_id] = data
 
-        rng_state_cpu = torch.get_rng_state()
-        rng_state_gpu = None
-        if self.device.type == 'cuda':
-            rng_state_gpu = torch.cuda.get_rng_state(self.device)
+        # rng_state_cpu = torch.get_rng_state()
+        # rng_state_gpu = None
+        # if self.device.type == 'cuda':
+        #     rng_state_gpu = torch.cuda.get_rng_state(self.device)
         
-        self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
+        # self.fpid_to_rng[forward_pass_id] = (rng_state_cpu, rng_state_gpu)
 
-        with torch.no_grad():
-            if isinstance(model_args, torch.Tensor):
-                output = self.model(model_args)
-            else:    
-                output = self.model(*model_args)
+        # with torch.no_grad():
+        if isinstance(model_args, torch.Tensor):
+            output = self.model(model_args)
+        else:    
+            output = self.model(*model_args)
+        
+        self.output_tensors[forward_pass_id] = output
 
         if self.version_to_fpid.get(self.current_version, None) is not None:
             self.version_to_fpid[self.current_version].append(forward_pass_id)
@@ -157,16 +161,16 @@ class Compute():
         # self.recompute_forward(forward_pass_id)
         # print('Gradient dict: ', gradient_dict)
         # t1 = time.time()
-        if self.recompute_thread is not None:
-            if self.recompute_thread.is_alive():
-                self.recompute_thread.join()
+        # if self.recompute_thread is not None:
+        #     if self.recompute_thread.is_alive():
+        #         self.recompute_thread.join()
 
-        # torch.cuda.synchronize()
-        # t2 = time.time()
+        # # torch.cuda.synchronize()
+        # # t2 = time.time()
 
-        if self.fpid_to_version.get(forward_pass_id, None) is not None:
-            print('Manual recompute for: ', forward_pass_id)
-            self.recompute_forward(forward_pass_id)
+        # if self.fpid_to_version.get(forward_pass_id, None) is not None:
+        #     print('Manual recompute for: ', forward_pass_id)
+        #     self.recompute_forward(forward_pass_id)
 
         # self.model.zero_grad()
         # self.optimizer.zero_grad()
@@ -202,10 +206,10 @@ class Compute():
                 else:
                     pass_grad_keys.append(key)
         else:
-            leaf_output_tensors = self.output_tensors
+            leaf_output_tensors = self.output_tensors[forward_pass_id]
             backward_grads = gradient_data
         torch.autograd.backward(leaf_output_tensors, backward_grads)
-
+        del self.output_tensors[forward_pass_id]
         # print('\nVersion to fpid in backward: ', self.version_to_fpid)
         # if self.version_to_fpid.get(self.current_version, None) is None:
         #     if self.current_version in self.version_to_param:
@@ -215,9 +219,9 @@ class Compute():
         # print('After Backward: ')
         # check_gpu_usage()
 
-        if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
-            self.recompute_thread = threading.Thread(target=self.recompute_forward, args=(forward_pass_id+1,))
-            self.recompute_thread.start()
+        # if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
+        #     self.recompute_thread = threading.Thread(target=self.recompute_forward, args=(forward_pass_id+1,))
+        #     self.recompute_thread.start()
 
         # if self.fpid_to_version.get(forward_pass_id+1, None) is not None:
         #     with torch.cuda.stream(self.recompute_stream): #self.recompute_stream
