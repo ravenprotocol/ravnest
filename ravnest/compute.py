@@ -348,22 +348,34 @@ class Compute():
 
     def middle_no_grad_forward_compute(self, data):
         # print('Is training: ', self.model.training)
-
-        model_args = self.create_no_grad_model_args(data)
-        
+        if self.backend == 'grpc':
+            model_args = self.create_no_grad_model_args(data)
+        else:
+            model_args = data
         # self.model.eval()
         with torch.no_grad():
-            output = self.model(*model_args)
+            if isinstance(model_args, torch.Tensor):
+                output = self.model(model_args)
+            else:    
+                output = self.model(*model_args)
+        # with torch.no_grad():
+        #     output = self.model(*model_args)
 
         return output
     
     def leaf_no_grad_forward(self, data):
         # print('Is training: ', self.model.training)
-
-        model_args = self.create_no_grad_model_args(data)
+        if self.backend == 'grpc':
+            model_args = self.create_no_grad_model_args(data)
+        else:
+            model_args = data
         # self.model.eval()
         with torch.no_grad():
-            output = self.model(*model_args)
+            if isinstance(model_args, torch.Tensor):
+                output = self.model(model_args)
+            else:    
+                output = self.model(*model_args)
+            # output = self.model(*model_args)
         return output
 
     def optimizer_step(self):

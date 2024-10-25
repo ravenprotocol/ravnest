@@ -220,15 +220,20 @@ class BaseTrainerFullAsync():
         """
         # self.prelim_checks()
         t1 = time.time()
+        total = 0
         for epoch in range(self.epochs):
             self.node.model.train()
             t2 = time.time()
+            b = 0
             for X_train, y_train in self.train_loader:
+                # print('\n Before train step: ', b)
                 self.train_step(X_train, y_train)
+                # print('\n After train step: ', b)
+                b += 1
             
             self.await_backwards()
 
-            # if self.val_loader is not None: 
+            # if self.val_loader is not None:
             #     # self.await_backwards()
             #     self.node.model.eval()
             #     acc = 0
@@ -246,9 +251,10 @@ class BaseTrainerFullAsync():
                 self.lr_scheduler.step()
             t_epoch = time.time() - t2
             print('Epoch: ', epoch, ' time taken: ', t_epoch)
+            total += t_epoch
         self.node.model.train()
         self.await_backwards()
-        print('Training Done!: ', time.time() - t1, ' seconds')
+        print('Training Done!: ', time.time() - t1, ' seconds', total)
         
         self.node.comm_session.parallel_ring_reduce()
         # print('Training Done!: ', time.time() - t1, ' seconds')
