@@ -822,10 +822,11 @@ class Node():
             self.send_threads.append(t)
             t.start()
         else:
-            self.forward_to_comm_pipe.send(output.detach().clone())
+            # self.forward_to_comm_pipe.send(output.detach().clone())
             # self.forward_comm_buffer.append(output.detach().clone())
             # self.comm_session.send_forward_tensors(output.detach().clone())
             # self.forward_send_buffer.append(output.detach().clone())
+            self.trigger_forward_send(output.detach().clone())
         
         self.forward_pass_id += 1
         self.n_forwards += 1
@@ -873,10 +874,11 @@ class Node():
             else:
                 sent_data = self.comm_session.create_backward_payload(forward_pass_id=forward_pass_id)
                 # self.backward_to_comm_pipe.send(sent_data)
-                dist.send(sent_data, self.rank_ - 1)
+                # dist.send(sent_data, self.rank_ - 1)
                 # self.backward_comm_buffer.append(sent_data)
                 # self.comm_session.send_grad_tensors(*sent_data)
                 # self.backward_send_buffer.append(sent_data)
+                self.trigger_backward_send(sent_data)
             
         if self.input_tensors.get(forward_pass_id, None) is not None:
             del self.input_tensors[forward_pass_id]
