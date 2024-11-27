@@ -35,7 +35,7 @@ def preprocess_dataset():
     generator.manual_seed(42)
 
     train_loader = DataLoader(list(zip(X_train,torch.tensor(y_train, dtype=torch.float32))), generator=generator, shuffle=True, batch_size=64, drop_last=True)
-    val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64)
+    val_loader = DataLoader(list(zip(X_test,torch.tensor(y_test, dtype=torch.float32))), shuffle=False, batch_size=64, drop_last=True)
     
     return train_loader, val_loader
 

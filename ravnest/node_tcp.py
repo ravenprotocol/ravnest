@@ -870,12 +870,14 @@ class Node():
             data = value
         
         output = self.compute_session.middle_no_grad_forward_compute(data)
-        sent_data = self.comm_session.create_no_grad_forward_payload(output, data=data)
+        self.trigger_forward_send(output)
+        
+        # sent_data = self.comm_session.create_no_grad_forward_payload(output, data=data)
 
-        # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
-        t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD,))
-        self.send_threads.append(t)
-        t.start()
+        # # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
+        # t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD,))
+        # self.send_threads.append(t)
+        # t.start()
 
     def stem_backward(self, value):
         self.node_status = NodeStatus.BACKWARD

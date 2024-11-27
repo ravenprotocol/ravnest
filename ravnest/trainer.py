@@ -233,19 +233,19 @@ class BaseTrainerFullAsync():
             
             self.await_backwards()
 
-            # if self.val_loader is not None:
-            #     # self.await_backwards()
-            #     self.node.model.eval()
-            #     acc = 0
-            #     for X_test, y_test in self.val_loader:
-            #         # self.await_one_backward()
-            #         # self.node.model.eval()
-            #         output = self.node.no_grad_forward(X_test)
-            #         accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
-            #         if self.node.node_type == NodeTypes.LEAF:
-            #             acc += accuracy.numpy()
-            #     if self.node.node_type == NodeTypes.LEAF:
-            #         print('Accuracy: ', acc/len(self.val_loader))
+            if self.val_loader is not None:
+                # self.await_backwards()
+                self.node.model.eval()
+                acc = 0
+                for X_test, y_test in self.val_loader:
+                    # self.await_one_backward()
+                    # self.node.model.eval()
+                    output = self.node.no_grad_forward(X_test)
+                    accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
+                    if self.node.node_type == NodeTypes.LEAF:
+                        acc += accuracy.numpy()
+                if self.node.node_type == NodeTypes.LEAF:
+                    print('Accuracy: ', acc/len(self.val_loader))
             
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
