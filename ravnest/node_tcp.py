@@ -249,7 +249,27 @@ class Node():
         else:
             self.rank_ = kwargs.get('node_id', None)
             dist.init_process_group(backend=self.backend, rank=kwargs.get('node_id', None), world_size=kwargs.get('cluster_length', None))
+            
+            self.proc_grps = {}
+            for i in range(kwargs.get('cluster_length', None) - 1):
+                self.proc_grps[i] = {}
+                self.proc_grps[i]['forward'] = dist.new_group([i, i+1])
+                self.proc_grps[i]['backward'] = dist.new_group([i, i+1])
+                print('Proc_grp created for: ', i, i+1)
 
+            if self.node_type == NodeTypes.ROOT:
+                self.nxt_grp_fwd = self.proc_grps[self.rank_]['forward']
+                self.nxt_grp_bwd = self.proc_grps[self.rank_]['backward']
+                
+            elif self.node_type == NodeTypes.STEM:
+                self.nxt_grp_fwd = self.proc_grps[self.rank_]['forward']
+                self.nxt_grp_bwd = self.proc_grps[self.rank_]['backward']                
+                self.prv_grp_fwd = self.proc_grps[self.rank_ - 1]['forward']
+                self.prv_grp_bwd = self.proc_grps[self.rank_ - 1]['backward']                
+            else:
+                self.prv_grp_fwd = self.proc_grps[self.rank_ - 1]['forward']
+                self.prv_grp_bwd = self.proc_grps[self.rank_ - 1]['backward']
+                                       
             self.forward_input_shape=kwargs.get('input_shape', None)
             self.backward_input_shape=kwargs.get('output_shape', None)
             self.forward_send_work, self.backward_send_work = None, None
@@ -362,42 +382,50 @@ class Node():
         # print('started')
 
     def check_work_thread(self, work, daemon=True, type=None):
-        # print('Check work thread started')
+        # print('Check work thread started for type: ', type)
         def wait_work(work):
             work.wait()
             # print('Wait completed',type,  self.forward_pass_id, self.backward_pass_id)
         t = Thread(target=wait_work, args=(work,), daemon=daemon)
         t.start()
-        return t
+        return work #t
     
     def start_forward_recv(self):
         # print('Starting forward recv')
         self.forward_ip = torch.zeros(self.forward_input_shape)
-        work = dist.irecv(self.forward_ip, self.rank_ - 1)
+        work = dist.irecv(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd)
+        # work = dist.broadcast(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
         self.forward_work = self.check_work_thread(work, type='recv_fwd')
+        # print('Broadcast fwd_recv done: ', self.forward_ip)
 
     def start_backward_recv(self):
         self.backward_ip = torch.zeros(self.backward_input_shape)
         # self.backward_work = dist.irecv(self.backward_ip, self.rank_ + 1)
-        work = dist.irecv(self.backward_ip, self.rank_ + 1)
+        work = dist.irecv(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd)
+        # work = dist.broadcast(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
         self.backward_work = self.check_work_thread(work, type='recv_backward')
+        # print('Broadcast bwd_recv done: ', self.backward_ip)
 
     def trigger_forward_send(self, data):
         if self.forward_send_work is not None:
-            while self.forward_send_work.is_alive():
+            while not self.forward_send_work.is_completed(): #self.forward_send_work.is_alive():
                 time.sleep(0)
 
-        work = dist.isend(data, self.rank_ + 1)
+        work = dist.isend(data, self.rank_ + 1, group=self.nxt_grp_fwd)
+        # work = dist.broadcast(data, self.rank_, group=self.nxt_grp_fwd, async_op=True)
         self.forward_send_work = self.check_work_thread(work, type='send_fwd')
+        # print('Forward sent work: ', self.forward_send_work)
         # print('Forward sent for: ', self.forward_pass_id)  
 
     def trigger_backward_send(self, data):
         if self.backward_send_work is not None:
-            while self.backward_send_work.is_alive():
+            while not self.backward_send_work.is_completed(): #self.backward_send_work.is_alive():
                 time.sleep(0)
 
-        work = dist.isend(data, self.rank_-1)#dist.isend(output.detach().clone(), self.rank_ + 1)
+        work = dist.isend(data, self.rank_-1, group=self.prv_grp_bwd)#dist.isend(output.detach().clone(), self.rank_ + 1)
+        # work = dist.broadcast(data, self.rank_, group=self.prv_grp_bwd, async_op=True)#dist.isend(output.detach().clone(), self.rank_ + 1)
         self.backward_send_work = self.check_work_thread(work, type='send_backward')
+        # print('Backward sent work: ', self.backward_send_work)
         # print('Backward sent for: ', self.forward_pass_id)    
 
     def check_forward_buffer(self, no_grad=False):
@@ -428,7 +456,7 @@ class Node():
             # print('checking ')
             # if self.forward_work.is_completed():
         # print('Self forward ip: ', self.forward_ip)
-        if not self.forward_work.is_alive():
+        if self.forward_work.is_completed():#not self.forward_work.is_alive():
             # print('Forward thread over')
             # print('Self forward ip: ', self.forward_ip)
             value = self.forward_ip
@@ -565,7 +593,7 @@ class Node():
         #     self.backward_work = self.check_work_thread(work, type='recv_backward')
 
         # if self.backward_work is not None:
-        if not self.backward_work.is_alive():#self.backward_work.is_completed():
+        if self.backward_work.is_completed():
             # print('Stem Backward recieved for: ', self.backward_pass_id)
             # print('Backward thread over')
             value = self.backward_ip #(fp_id, self.backward_ip)

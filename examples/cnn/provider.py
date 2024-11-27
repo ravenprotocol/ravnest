@@ -84,4 +84,4 @@ if __name__ == '__main__':
 
     # trainer.evaluate()
 
-# torchrun --nnodes=2 --nproc_per_node=1 --node_rank=0 --rdzv-id=1 --rdzv-backend=static --master_addr=localhost --master_port=29500 examples/cnn/provider_0.py
+# torchrun --nnodes=3 --nproc_per_node=1 --node_rank=0 --rdzv-id=1 --rdzv-backend=static --master_addr=localhost --master_port=29500 examples/cnn/provider_0.py
