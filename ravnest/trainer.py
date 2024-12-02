@@ -177,7 +177,8 @@ class BaseTrainerFullAsync():
     :type n_forwards: int
     """
 
-    def __init__(self, node:Node = None, lr_scheduler=None, lr_scheduler_params={}, 
+    def __init__(self, node:Node = None, lr_scheduler=None, lr_scheduler_params={},
+                 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
                  train_loader=None, val_loader=None, val_freq=1, save=False, epochs=1, 
                  batch_size=64, step_size=1, update_frequency = 1, loss_fn = None, accuracy_fn=None):
         self.node = node
@@ -187,6 +188,7 @@ class BaseTrainerFullAsync():
         self.val_loader = val_loader
         self.val_freq = val_freq
         self.save = save
+        self.device = device
         self.epochs = epochs
         self.batch_size = batch_size
         self.step_size = step_size
@@ -227,25 +229,29 @@ class BaseTrainerFullAsync():
             b = 0
             for X_train, y_train in self.train_loader:
                 # print('\n Before train step: ', b)
+                X_train = X_train.to(self.device)
+                y_train = y_train.to(self.device)
                 self.train_step(X_train, y_train)
                 # print('\n After train step: ', b)
                 b += 1
             
             self.await_backwards()
 
-            if self.val_loader is not None:
-                # self.await_backwards()
-                self.node.model.eval()
-                acc = 0
-                for X_test, y_test in self.val_loader:
-                    # self.await_one_backward()
-                    # self.node.model.eval()
-                    output = self.node.no_grad_forward(X_test)
-                    accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
-                    if self.node.node_type == NodeTypes.LEAF:
-                        acc += accuracy.numpy()
-                if self.node.node_type == NodeTypes.LEAF:
-                    print('Accuracy: ', acc/len(self.val_loader))
+            # if self.val_loader is not None:
+            #     # self.await_backwards()
+            #     self.node.model.eval()
+            #     acc = 0
+            #     for X_test, y_test in self.val_loader:
+            #         # self.await_one_backward()
+            #         # self.node.model.eval()
+            #         X_test = X_test.to(self.device)
+            #         y_test = y_test.to(self.device)
+            #         output = self.node.no_grad_forward(X_test)
+            #         accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
+            #         if self.node.node_type == NodeTypes.LEAF:
+            #             acc += accuracy.numpy()
+            #     if self.node.node_type == NodeTypes.LEAF:
+            #         print('Accuracy: ', acc/len(self.val_loader))
             
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()

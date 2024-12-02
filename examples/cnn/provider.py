@@ -75,6 +75,7 @@ if __name__ == '__main__':
                       val_freq=64,
                       epochs=100,
                       batch_size=64,
+                      device=torch.device('cpu'),
                     #   save=True,
                       loss_fn=loss_fn,
                       accuracy_fn=accuracy_fn
