@@ -62,7 +62,7 @@ class Node():
     """
 
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, update_frequency = 1, 
-                 reduce_factor=None, labels=None, device = torch.device('cpu'), 
+                 reduce_factor=None, labels=None, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
                  loss_filename='losses.txt', backend = 'grpc', compression=False, average_optim=False, **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
@@ -92,8 +92,9 @@ class Node():
         self.device = device
         self.compression = compression
 
-        if not next(self.model.parameters()).is_cuda:
-            self.model.to(device)
+        # if not next(self.model.parameters()).is_cuda:
+        #     self.model.to(device)
+        self.model.to(self.device)
 
         # self.load_forward_buffer = self.manager.list()
         # self.load_backward_buffer = self.manager.list()
@@ -286,7 +287,7 @@ class Node():
             self.comm_session = Communication_TCP(node_type=self.node_type,
                                                 start_server_flag = self.start_server_flag,
                                                 input_tensors=self.input_tensors,
-                                                backend='gloo',
+                                                backend=self.backend,
                                                 rank=kwargs.get('node_id', None), #int(os.environ["RANK"])
                                                 world_size=kwargs.get('cluster_length', None), #int(os.environ["WORLD_SIZE"])
                                                 forward_recv_pipe = self.forward_recv_pipe,
@@ -392,17 +393,17 @@ class Node():
     
     def start_forward_recv(self):
         # print('Starting forward recv')
-        self.forward_ip = torch.zeros(self.forward_input_shape)
-        work = dist.irecv(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd)
-        # work = dist.broadcast(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
+        self.forward_ip = torch.zeros(self.forward_input_shape).to(self.device)
+        # work = dist.irecv(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd)
+        work = dist.broadcast(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
         self.forward_work = self.check_work_thread(work, type='recv_fwd')
         # print('Broadcast fwd_recv done: ', self.forward_ip)
 
     def start_backward_recv(self):
-        self.backward_ip = torch.zeros(self.backward_input_shape)
+        self.backward_ip = torch.zeros(self.backward_input_shape).to(self.device)
         # self.backward_work = dist.irecv(self.backward_ip, self.rank_ + 1)
-        work = dist.irecv(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd)
-        # work = dist.broadcast(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
+        # work = dist.irecv(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd)
+        work = dist.broadcast(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
         self.backward_work = self.check_work_thread(work, type='recv_backward')
         # print('Broadcast bwd_recv done: ', self.backward_ip)
 
@@ -411,8 +412,8 @@ class Node():
             while not self.forward_send_work.is_completed(): #self.forward_send_work.is_alive():
                 time.sleep(0)
 
-        work = dist.isend(data, self.rank_ + 1, group=self.nxt_grp_fwd)
-        # work = dist.broadcast(data, self.rank_, group=self.nxt_grp_fwd, async_op=True)
+        # work = dist.isend(data, self.rank_ + 1, group=self.nxt_grp_fwd)
+        work = dist.broadcast(data, self.rank_, group=self.nxt_grp_fwd, async_op=True)
         self.forward_send_work = self.check_work_thread(work, type='send_fwd')
         # print('Forward sent work: ', self.forward_send_work)
         # print('Forward sent for: ', self.forward_pass_id)  
@@ -422,8 +423,8 @@ class Node():
             while not self.backward_send_work.is_completed(): #self.backward_send_work.is_alive():
                 time.sleep(0)
 
-        work = dist.isend(data, self.rank_-1, group=self.prv_grp_bwd)#dist.isend(output.detach().clone(), self.rank_ + 1)
-        # work = dist.broadcast(data, self.rank_, group=self.prv_grp_bwd, async_op=True)#dist.isend(output.detach().clone(), self.rank_ + 1)
+        # work = dist.isend(data, self.rank_-1, group=self.prv_grp_bwd)#dist.isend(output.detach().clone(), self.rank_ + 1)
+        work = dist.broadcast(data, self.rank_, group=self.prv_grp_bwd, async_op=True)#dist.isend(output.detach().clone(), self.rank_ + 1)
         self.backward_send_work = self.check_work_thread(work, type='send_backward')
         # print('Backward sent work: ', self.backward_send_work)
         # print('Backward sent for: ', self.forward_pass_id)    

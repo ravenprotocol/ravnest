@@ -137,7 +137,7 @@ class Communication_TCP():
         if self.node_type == NodeTypes.LEAF:
             # if isinstance(model_args, torch.Tensor):
                 # grads.append(model_args.grad.detach().to(torch.device('cpu')))
-            grads = model_args.grad.detach().to(torch.device('cpu'))
+            grads = model_args.grad.detach()#.to(torch.device('cpu'))
             # else:
             #     for value in model_args:
             #         if value.requires_grad:
@@ -149,7 +149,7 @@ class Communication_TCP():
             #     for value in self.input_tensors[forward_pass_id]:
             #         if value.requires_grad:
             #             grads.append(value.grad.detach().to(torch.device('cpu')))
-            grads = self.input_tensors[forward_pass_id].grad.detach().to(torch.device('cpu'))
+            grads = self.input_tensors[forward_pass_id].grad.detach()#.to(torch.device('cpu'))
         return grads #(forward_pass_id, grads)
 
     def __getstate__(self):
