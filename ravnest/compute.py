@@ -13,7 +13,7 @@ class Compute():
                 latest_weights_buffer=None, latest_weights_lock=None,
                 input_tensors = None, tensor_id = None, 
                 output_template = None, input_template = None,
-                node_type=None, backend='grpc',
+                node_type=None, backend='grpc', recompute=False,
                 submod_file = None, loss_filename = None, device = None):
         self.model = model
         self.optimizer = optimizer
@@ -34,6 +34,7 @@ class Compute():
         self.input_template = input_template
         self.node_type = node_type
         self.backend = backend
+        self.recompute = recompute
         self.device = device
         self.recompute_thread = None
         self.file_loss = 0
@@ -48,7 +49,8 @@ class Compute():
     def update_model_version(self):
         # self.latest_weights_lock.acquire(block=True)
         # self.version_update_lock.acquire(blocking=True)
-        self.version_to_param[self.current_version] = self.get_params_clone()
+        if self.recompute:
+            self.version_to_param[self.current_version] = self.get_params_clone()
         # self.version_update_lock.release()
         # print('\n Updated model version as well')
 
@@ -210,6 +212,14 @@ class Compute():
             backward_grads = gradient_data
         torch.autograd.backward(leaf_output_tensors, backward_grads)
         del self.output_tensors[forward_pass_id]
+        # print('Num param versions: ', len(self.version_to_fpid))
+        # print('len of version to param: ', len(self.version_to_param))
+
+        recompute_version = self.fpid_to_version[forward_pass_id]
+        self.version_to_fpid[recompute_version].remove(forward_pass_id)
+        if len(self.version_to_fpid[recompute_version]) == 0:
+            # print('Deleting in recompute: Recompute version ', recompute_version)
+            del self.version_to_fpid[recompute_version]
         # print('\nVersion to fpid in backward: ', self.version_to_fpid)
         # if self.version_to_fpid.get(self.current_version, None) is None:
         #     if self.current_version in self.version_to_param:

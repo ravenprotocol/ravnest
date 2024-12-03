@@ -63,7 +63,7 @@ class Node():
 
     def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, update_frequency = 1, 
                  reduce_factor=None, labels=None, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
-                 loss_filename='losses.txt', backend = 'grpc', compression=False, average_optim=False, **kwargs):
+                 loss_filename='losses.txt', recompute=False, backend = 'grpc', compression=False, average_optim=False, **kwargs):
         self.manager = mp.Manager()
         self.forward_lock = mp.Lock()
         self.backward_lock = mp.Lock()
@@ -129,6 +129,7 @@ class Node():
         self.rank = kwargs.get('rank', None)
         # print('\n Rank: ', self.rank)
         self.ring_size = kwargs.get('ring_size', None)
+        self.recompute = recompute
         
         self.ring_param_keys = {}
         data_dict_keys = get_trainable_param_names(model=self.model)
@@ -211,7 +212,7 @@ class Node():
         self.compute_session = Compute(model = self.model, optimizer = self.optimizer, compression=self.compression,
                                         input_tensors = self.input_tensors, latest_weights_buffer = self.latest_weights_buffer,
                                         latest_weights_lock=self.latest_weights_lock, tensor_id = self.tensor_id, output_template = self.output_template, 
-                                        input_template = self.input_template, node_type=self.node_type, backend=self.backend,
+                                        input_template = self.input_template, node_type=self.node_type, backend=self.backend, recompute=self.recompute,
                                         submod_file=self.submod_file, loss_filename=self.loss_filename, device = self.device)
 
         if self.backend == 'grpc':
