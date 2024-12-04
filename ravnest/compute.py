@@ -123,7 +123,8 @@ class Compute():
             model_args = self.create_model_args(data, forward_pass_id=forward_pass_id, node_type = NodeTypes.STEM)
         else:
             model_args = data
-            model_args.requires_grad_()
+            for model_arg in model_args:
+                model_arg.requires_grad_()
             self.input_tensors[forward_pass_id] = data
 
         # rng_state_cpu = torch.get_rng_state()
@@ -335,6 +336,8 @@ class Compute():
                 model_args.requires_grad_()
                 outputs = self.model(model_args)
             else:
+                for model_arg in model_args:
+                    model_arg.requires_grad_()
                 outputs = self.model(*model_args)
 
         

@@ -272,17 +272,17 @@ class Node():
                 self.prv_grp_fwd = self.proc_grps[self.rank_ - 1]['forward']
                 self.prv_grp_bwd = self.proc_grps[self.rank_ - 1]['backward']
                                        
-            self.forward_input_shape=kwargs.get('input_shape', None)
-            self.backward_input_shape=kwargs.get('output_shape', None)
+            self.forward_input_shapes=kwargs.get('input_shape', None)
+            self.backward_input_shapes=kwargs.get('output_shape', None)
             self.forward_send_work, self.backward_send_work = None, None
             if self.node_type == NodeTypes.ROOT or self.node_type == NodeTypes.STEM:
                 self.backward_work = None
-                self.backward_ip = None
+                self.backward_ips = None
                 self.start_backward_recv()
 
             if self.node_type == NodeTypes.LEAF or self.node_type == NodeTypes.STEM:
                 self.forward_work = None
-                self.forward_ip = None
+                self.forward_ips = None
                 self.start_forward_recv()
 
             self.comm_session = Communication_TCP(node_type=self.node_type,
@@ -295,8 +295,8 @@ class Node():
                                                 backward_recv_pipe = self.backward_recv_pipe,
                                                 forward_lock=self.forward_lock, 
                                                 backward_lock=self.backward_lock,
-                                                forward_input_shape=self.forward_input_shape,
-                                                backward_input_shape=self.backward_input_shape)
+                                                forward_input_shape=self.forward_input_shapes,
+                                                backward_input_shape=self.backward_input_shapes)
 
         self.start()
         
@@ -384,48 +384,71 @@ class Node():
         # print('started')
 
     def check_work_thread(self, work, daemon=True, type=None):
-        # print('Check work thread started for type: ', type)
-        def wait_work(work):
+        # print('Check work thread started for type: ', works, type)
+        def wait_works(work):
             work.wait()
             # print('Wait completed',type,  self.forward_pass_id, self.backward_pass_id)
-        t = Thread(target=wait_work, args=(work,), daemon=daemon)
+        t = Thread(target=wait_works, args=(work,), daemon=daemon)
         t.start()
         return work #t
     
     def start_forward_recv(self):
         # print('Starting forward recv')
-        self.forward_ip = torch.zeros(self.forward_input_shape).to(self.device)
+        # print('receiving: ', self.forward_input_shapes)
+        self.forward_ips = [torch.zeros(forward_input_shape).to(self.device) for forward_input_shape in self.forward_input_shapes]
         # work = dist.irecv(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd)
-        work = dist.broadcast(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
-        self.forward_work = self.check_work_thread(work, type='recv_fwd')
+        fwd_work = None
+        for forward_ip in self.forward_ips:
+            if fwd_work is not None:
+                while not fwd_work.is_completed():
+                    time.sleep(0)
+            work = dist.broadcast(forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
+            fwd_work = self.check_work_thread(work, type='recv_fwd')
+        # works = [dist.irecv(forward_ip, self.rank_ - 1, group=self.prv_grp_fwd) for forward_ip in self.forward_ips]
+        self.forward_work = fwd_work #self.check_work_thread(works, type='recv_fwd')
         # print('Broadcast fwd_recv done: ', self.forward_ip)
 
     def start_backward_recv(self):
-        self.backward_ip = torch.zeros(self.backward_input_shape).to(self.device)
+        self.backward_ips = [torch.zeros(backward_input_shape).to(self.device) for backward_input_shape in self.backward_input_shapes]
         # self.backward_work = dist.irecv(self.backward_ip, self.rank_ + 1)
         # work = dist.irecv(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd)
-        work = dist.broadcast(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
-        self.backward_work = self.check_work_thread(work, type='recv_backward')
+
+        bwd_work = None
+        for backward_ip in self.backward_ips:
+            if bwd_work is not None:
+                while not bwd_work.is_completed():
+                    time.sleep(0)
+            work = dist.broadcast(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
+            bwd_work = self.check_work_thread(work, type='recv_backward')
+
+        # works = [dist.broadcast(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True) for backward_ip in self.backward_ips]
+        # works = [dist.irecv(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd) for backward_ip in self.backward_ips]
+        self.backward_work = bwd_work #self.check_work_thread(works, type='recv_backward')
         # print('Broadcast bwd_recv done: ', self.backward_ip)
 
     def trigger_forward_send(self, data):
         if self.forward_send_work is not None:
-            while not self.forward_send_work.is_completed(): #self.forward_send_work.is_alive():
+            while not self.forward_send_work.is_completed(): 
                 time.sleep(0)
 
         # work = dist.isend(data, self.rank_ + 1, group=self.nxt_grp_fwd)
         work = dist.broadcast(data, self.rank_, group=self.nxt_grp_fwd, async_op=True)
+        # for t in data:
+        #     print('Sending: ', t.shape)
+        # works = [dist.isend(tensor, self.rank_ + 1, group=self.nxt_grp_fwd) for tensor in data]
+
         self.forward_send_work = self.check_work_thread(work, type='send_fwd')
         # print('Forward sent work: ', self.forward_send_work)
-        # print('Forward sent for: ', self.forward_pass_id)  
+        # print('Forward sent for: ', self.forward_pass_id)
 
     def trigger_backward_send(self, data):
         if self.backward_send_work is not None:
-            while not self.backward_send_work.is_completed(): #self.backward_send_work.is_alive():
+            while not self.backward_send_work.is_completed():
                 time.sleep(0)
 
         # work = dist.isend(data, self.rank_-1, group=self.prv_grp_bwd)#dist.isend(output.detach().clone(), self.rank_ + 1)
         work = dist.broadcast(data, self.rank_, group=self.prv_grp_bwd, async_op=True)#dist.isend(output.detach().clone(), self.rank_ + 1)
+        # works = [dist.isend(grad, self.rank_ - 1, group=self.prv_grp_bwd) for grad in data]#dist.isend(output.detach().clone(), self.rank_ + 1)
         self.backward_send_work = self.check_work_thread(work, type='send_backward')
         # print('Backward sent work: ', self.backward_send_work)
         # print('Backward sent for: ', self.forward_pass_id)    
@@ -458,16 +481,16 @@ class Node():
             # print('checking ')
             # if self.forward_work.is_completed():
         # print('Self forward ip: ', self.forward_ip)
-        if self.forward_work.is_completed():#not self.forward_work.is_alive():
+        if self.forward_work.is_completed(): #not self.forward_work.is_alive():
             # print('Forward thread over')
             # print('Self forward ip: ', self.forward_ip)
-            value = self.forward_ip
+            values = self.forward_ips
             # self.forward_ip = None
             # self.forward_work = None
             self.start_forward_recv()
 
             if self.backend == 'grpc':
-                action = value['action']
+                action = values['action']
                 # print('\n', action, ' Popped from forward buffer')
                 if action == ActionTypes.FORWARD:
                     if self.node_type == NodeTypes.LEAF:
@@ -494,7 +517,7 @@ class Node():
                     action = 'no_grad_' + action
                 else:
                     g.forward_done = True
-            outputs = getattr(self, action)(value) #, self.send_threads)
+            outputs = getattr(self, action)(values) #, self.send_threads)
             monitor_flag_break = True
 
         self.node_status = NodeStatus.IDLE
@@ -596,15 +619,16 @@ class Node():
 
         # if self.backward_work is not None:
         if self.backward_work.is_completed():
+            # if not self.backward_work.is_alive():
             # print('Stem Backward recieved for: ', self.backward_pass_id)
             # print('Backward thread over')
-            value = self.backward_ip #(fp_id, self.backward_ip)
+            values = self.backward_ips #(fp_id, self.backward_ip)
             # self.backward_ip = None
             # self.backward_work = None
             self.start_backward_recv()
             action = 'stem_backward'
 
-            getattr(self, action)(value)
+            getattr(self, action)(values)
             monitor_flag_break = True
 
             if not self.steady_state:
@@ -687,7 +711,7 @@ class Node():
 
         # print('Before Root Forward: ')
         # check_gpu_usage()
-        output = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **modified_kwargs)
+        outputs = self.compute_session.root_forward_compute(tensors, self.forward_pass_id, **modified_kwargs)
         # print('Total root forward compute time: ', time.time() - t)
         # print('After Root Forward: ')
         # check_gpu_usage()
@@ -700,7 +724,7 @@ class Node():
             if self.n_forwards - self.latest_backward_id > (self.cluster_length - 1):
                 self.steady_state = True
 
-            sent_data = self.comm_session.create_forward_payload(output, tensors, steady_state=self.steady_state) #, forward_pass_id=self.forward_pass_id)
+            sent_data = self.comm_session.create_forward_payload(outputs, tensors, steady_state=self.steady_state) #, forward_pass_id=self.forward_pass_id)
 
             
             # self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
@@ -714,8 +738,11 @@ class Node():
             # work = dist.isend(output.detach().clone(), self.rank_ + 1)
             # self.forward_send_work = self.check_work_thread(work, type='send_fwd')
             # print('Forward sent for: ', self.forward_pass_id)
-            self.trigger_forward_send(output.detach().clone())
-
+            if isinstance(outputs, tuple):
+                for output in outputs:
+                    self.trigger_forward_send(output.detach().clone())
+            else:
+                self.trigger_forward_send(outputs.detach().clone())
             # print('Forward Snt')
             # self.forward_comm_buffer.append(output.detach().clone())
             # print('Time taken to send to forward comm pipe: ', time.time() - t)
@@ -726,11 +753,11 @@ class Node():
         self.root_compute = True
         self.node_status = NodeStatus.IDLE
 
-    def leaf_forward(self, value):
+    def leaf_forward(self, values):
         if self.backend == 'grpc':
-            data = value['data']
+            data = values['data']
         else:
-            data = value
+            data = values
         # print('leaf forward ip: ', data[0])
         # self.forward_pass_id = value['forward_pass_id']
         model_args, outputs = self.compute_session.leaf_forward(data)
@@ -761,7 +788,11 @@ class Node():
             # work = dist.isend(sent_data, self.rank_-1)#dist.isend(output.detach().clone(), self.rank_ + 1)
             # self.backward_send_work = self.check_work_thread(work, type='send_backward')
             # print('Backward sent for: ', self.forward_pass_id)
-            self.trigger_backward_send(sent_data)
+            if isinstance(sent_data, torch.Tensor):
+                self.trigger_backward_send(sent_data)
+            else:
+                for grad in sent_data:
+                    self.trigger_backward_send(grad)
             # self.backward_comm_buffer.append(sent_data)
             # print('Time taken to send to backward comm pipe: ', time.time() - t)
             # self.comm_session.send_grad_tensors(*sent_data)
@@ -813,11 +844,11 @@ class Node():
         # self.comm_session.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
         
-        output = self.compute_session.root_no_grad_forward_compute(tensors=tensors, **kwargs)
+        outputs = self.compute_session.root_no_grad_forward_compute(tensors=tensors, **kwargs)
 
         if self.backend == 'grpc':
 
-            sent_data = self.comm_session.create_no_grad_forward_payload(output, tensors=tensors)
+            sent_data = self.comm_session.create_no_grad_forward_payload(outputs, tensors=tensors)
 
             # self.comm_session.trigger_send(sent_data, type=ActionTypes.FORWARD, target_host=self.forward_target_host, target_port=self.forward_target_port)
             self.trigger_send(sent_data, type=ActionTypes.FORWARD)
@@ -825,27 +856,33 @@ class Node():
             # work = dist.isend(output, self.rank_ + 1)
             # self.no_grad_forward_send_work = self.check_work_thread(work)
             # dist.send(output, self.rank_ + 1)
-            self.trigger_forward_send(output)
+            # self.trigger_forward_send(output)
+
+            if isinstance(outputs, tuple):
+                for output in outputs:
+                    self.trigger_forward_send(output)
+            else:
+                self.trigger_forward_send(outputs)
             # print('sent no grad forward: ', output[0])
         # print('No Grad forward compute done')
         self.node_status = NodeStatus.IDLE
 
-    def stem_forward(self, value):
+    def stem_forward(self, values):
         # print('n_backwards in FORWARD: ', self.n_backwards)
         self.node_status = NodeStatus.FORWARD
         if self.backend == 'grpc':
-            data = value['data']
+            data = values['data']
             # forward_pass_id = value['forward_pass_id']
-            self.steady_state = value['steady_state']
+            self.steady_state = values['steady_state']
             # print('Start of forward: ', forward_pass_id)
         else:
-            data = value
+            data = values
         
-        output = self.compute_session.middle_forward_compute(data, forward_pass_id=self.forward_pass_id)
+        outputs = self.compute_session.middle_forward_compute(data, forward_pass_id=self.forward_pass_id)
 
         if self.backend == 'grpc':
 
-            sent_data = self.comm_session.create_forward_payload(output, data=data) #, forward_pass_id=self.forward_pass_id)
+            sent_data = self.comm_session.create_forward_payload(outputs, data=data) #, forward_pass_id=self.forward_pass_id)
 
             # t = Thread(target=self.comm_session.trigger_send, args=(sent_data, ActionTypes.FORWARD, self.forward_target_host, self.forward_target_port,))
             t = Thread(target=self.trigger_send, args=(sent_data, ActionTypes.FORWARD,))
@@ -856,7 +893,13 @@ class Node():
             # self.forward_comm_buffer.append(output.detach().clone())
             # self.comm_session.send_forward_tensors(output.detach().clone())
             # self.forward_send_buffer.append(output.detach().clone())
-            self.trigger_forward_send(output.detach().clone())
+            if isinstance(outputs, tuple):
+                for output in outputs:
+                    self.trigger_forward_send(output.detach().clone())
+            else:
+                self.trigger_forward_send(outputs.detach().clone())
+
+            # self.trigger_forward_send([output.detach().clone() for output in outputs])
         
         self.forward_pass_id += 1
         self.n_forwards += 1
@@ -871,8 +914,14 @@ class Node():
         else:
             data = value
         
-        output = self.compute_session.middle_no_grad_forward_compute(data)
-        self.trigger_forward_send(output)
+        outputs = self.compute_session.middle_no_grad_forward_compute(data)
+        # self.trigger_forward_send(output)
+
+        if isinstance(outputs, tuple):
+            for output in outputs:
+                self.trigger_forward_send(output)
+        else:
+            self.trigger_forward_send(outputs)
         
         # sent_data = self.comm_session.create_no_grad_forward_payload(output, data=data)
 
@@ -881,14 +930,14 @@ class Node():
         # self.send_threads.append(t)
         # t.start()
 
-    def stem_backward(self, value):
+    def stem_backward(self, values):
         self.node_status = NodeStatus.BACKWARD
         if self.backend == 'grpc':
-            gradient_data = value['data']
-            forward_pass_id = value['forward_pass_id']
+            gradient_data = values['data']
+            forward_pass_id = values['forward_pass_id']
         else:
             forward_pass_id = self.backward_pass_id#value[0].item()
-            gradient_data = value#[1]
+            gradient_data = values#[1]
         
         self.latest_backward_id = forward_pass_id
         # print('Start of backward: ', forward_pass_id)
@@ -910,7 +959,12 @@ class Node():
                 # self.backward_comm_buffer.append(sent_data)
                 # self.comm_session.send_grad_tensors(*sent_data)
                 # self.backward_send_buffer.append(sent_data)
-                self.trigger_backward_send(sent_data)
+                # self.trigger_backward_send(sent_data)
+                if isinstance(sent_data, torch.Tensor):
+                    self.trigger_backward_send(sent_data)
+                else:
+                    for grad in sent_data:
+                        self.trigger_backward_send(grad)
             
         if self.input_tensors.get(forward_pass_id, None) is not None:
             del self.input_tensors[forward_pass_id]
@@ -922,6 +976,7 @@ class Node():
 
     def optimizer_step(self):
         if self.backward_monitor_flag:
+            # print('Step called')
             self.compute_session.optimizer_step()
         if self.n_backwards % self.reduce_threshold == 0:
             # print('\nPre AVeraged params: ', self.compute_session.model.state_dict()['L__self___bert_encoder_layer_9_output_dense.weight'])#list(self.compute_session.model.state_dict().keys())[0]])

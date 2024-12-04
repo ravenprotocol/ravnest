@@ -82,16 +82,16 @@ class BaseTrainer():
                     self.node.model.zero_grad()
                     self.node.optimizer.zero_grad()
             
-            if self.val_loader is not None: 
-                self.node.model.eval()
-                acc = 0
-                for X_test, y_test in self.val_loader:
-                    output = self.node.no_grad_forward(X_test)
-                    accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
-                    if self.node.node_type == NodeTypes.LEAF:
-                        acc += accuracy.numpy()
-                if self.node.node_type == NodeTypes.LEAF:
-                    print('Accuracy: ', acc/len(self.val_loader))
+            # if self.val_loader is not None: 
+            #     self.node.model.eval()
+            #     acc = 0
+            #     for X_test, y_test in self.val_loader:
+            #         output = self.node.no_grad_forward(X_test)
+            #         accuracy = self.node.dist_func(self.accuracy_fn, args=(output, y_test))
+            #         if self.node.node_type == NodeTypes.LEAF:
+            #             acc += accuracy.numpy()
+            #     if self.node.node_type == NodeTypes.LEAF:
+            #         print('Accuracy: ', acc/len(self.val_loader))
 
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
@@ -204,6 +204,8 @@ class BaseTrainerFullAsync():
     def train_step(self, x, y):
         outputs = self.node.forward(x)
         loss = self.node.dist_func(self.loss_fn, args=(outputs, y))
+        if loss is not None:
+            loss.div(self.update_frequency)
         # if self.node.node_type == NodeTypes.LEAF:
         #     print('Loss: ', loss)
         self.node.backward(loss)
