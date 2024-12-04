@@ -266,6 +266,7 @@ def remake_proportions(proportions):
 def split_model_equal(model=None, num_splits=None, proportions=None, example_args=(), example_kwargs={}, cluster_path=None, node_paths=None, model_input_node=None):
 
     # pipe = split_model(model, num_splits)
+    # proportions = [0.75, 0.15, 0.1]
     pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
     
     print('Testing pipe: ')
@@ -273,6 +274,7 @@ def split_model_equal(model=None, num_splits=None, proportions=None, example_arg
     try:
         op = pipe.forward(*example_args, **example_kwargs)
     except Exception as e:
+        # proportions = [0.5, 0.3, 0.2]
         proportions = remake_proportions(proportions)
         print('Remade proportions: ', proportions)
         pipe = split_model_on_proportions(model, proportions=proportions, example_args=example_args, example_kwargs=example_kwargs)
@@ -325,6 +327,7 @@ def split_model_equal(model=None, num_splits=None, proportions=None, example_arg
                     arg_index += 1
             compiled_input_dict[node.name] = input_dict
 
+    print('Compiled input dict: ', compiled_input_dict)
     for key, value in compiled_output_dict.items():
         if key == 'model_inputs':
             with open('{}/{}/{}.pkl'.format(cluster_path, model_input_node, key), 'wb') as file:
@@ -457,12 +460,12 @@ def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False)
                         node_paths=cluster_node_ip_addresses,
                         model_input_node = model_input_node)
         
-    input_tensor = example_args[0]
+    input_tensor = example_args#[0]
     for node in node_pool:
         node.set_submodel()
-        output_tensor = node.submodel(input_tensor)
-        node.input_shape = input_tensor.shape
-        node.output_shape = output_tensor.shape
+        output_tensor = node.submodel(*input_tensor) if isinstance(input_tensor, tuple) else node.submodel(input_tensor)
+        node.input_shape = tuple(inp_t.shape for inp_t in input_tensor) if isinstance(input_tensor, tuple) else [input_tensor.shape]
+        node.output_shape = tuple(out_t.shape for out_t in output_tensor) if isinstance(output_tensor, tuple) else [output_tensor.shape]
         print('INPUT SHAPE: ', node.input_shape, 'OUTPUT SHAPE: ', node.output_shape)
         input_tensor = output_tensor
         # print('\n Node id: ', node.node_id, ' params: ', node.submodel.state_dict().keys())
