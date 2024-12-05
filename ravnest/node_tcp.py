@@ -392,20 +392,30 @@ class Node():
         t.start()
         return work #t
     
+    def check_works_thread(self, works, daemon=True, type=None):
+        def wait_works(works):
+            for work in works:
+                work.wait()
+
+        t = Thread(target=wait_works, args=(works,), daemon=daemon)
+        t.start()
+        return works#t
+    
     def start_forward_recv(self):
         # print('Starting forward recv')
         # print('receiving: ', self.forward_input_shapes)
+
         self.forward_ips = [torch.zeros(forward_input_shape).to(self.device) for forward_input_shape in self.forward_input_shapes]
         # work = dist.irecv(self.forward_ip, self.rank_ - 1, group=self.prv_grp_fwd)
-        fwd_work = None
-        for forward_ip in self.forward_ips:
-            if fwd_work is not None:
-                while not fwd_work.is_completed():
-                    time.sleep(0)
-            work = dist.broadcast(forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
-            fwd_work = self.check_work_thread(work, type='recv_fwd')
-        # works = [dist.irecv(forward_ip, self.rank_ - 1, group=self.prv_grp_fwd) for forward_ip in self.forward_ips]
-        self.forward_work = fwd_work #self.check_work_thread(works, type='recv_fwd')
+        # fwd_work = None
+        # for forward_ip in self.forward_ips:
+        #     if fwd_work is not None:
+        #         while not fwd_work.is_completed():
+        #             time.sleep(0)
+        #     work = dist.broadcast(forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True)
+        #     fwd_work = self.check_work_thread(work, type='recv_fwd')
+        works = [dist.broadcast(forward_ip, self.rank_ - 1, group=self.prv_grp_fwd, async_op=True) for forward_ip in self.forward_ips]
+        self.forward_work = self.check_works_thread(works, type='recv_fwd') #fwd_work #
         # print('Broadcast fwd_recv done: ', self.forward_ip)
 
     def start_backward_recv(self):
@@ -413,17 +423,17 @@ class Node():
         # self.backward_work = dist.irecv(self.backward_ip, self.rank_ + 1)
         # work = dist.irecv(self.backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd)
 
-        bwd_work = None
-        for backward_ip in self.backward_ips:
-            if bwd_work is not None:
-                while not bwd_work.is_completed():
-                    time.sleep(0)
-            work = dist.broadcast(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
-            bwd_work = self.check_work_thread(work, type='recv_backward')
+        # bwd_work = None
+        # for backward_ip in self.backward_ips:
+        #     if bwd_work is not None:
+        #         while not bwd_work.is_completed():
+        #             time.sleep(0)
+        #     work = dist.broadcast(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True)
+        #     bwd_work = self.check_work_thread(work, type='recv_backward')
 
-        # works = [dist.broadcast(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True) for backward_ip in self.backward_ips]
+        works = [dist.broadcast(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd, async_op=True) for backward_ip in self.backward_ips]
         # works = [dist.irecv(backward_ip, self.rank_ + 1, group=self.nxt_grp_bwd) for backward_ip in self.backward_ips]
-        self.backward_work = bwd_work #self.check_work_thread(works, type='recv_backward')
+        self.backward_work = self.check_works_thread(works, type='recv_backward')#bwd_work #
         # print('Broadcast bwd_recv done: ', self.backward_ip)
 
     def trigger_forward_send(self, data):
@@ -481,7 +491,12 @@ class Node():
             # print('checking ')
             # if self.forward_work.is_completed():
         # print('Self forward ip: ', self.forward_ip)
-        if self.forward_work.is_completed(): #not self.forward_work.is_alive():
+        ready_flag = True
+        for fwd_work in self.forward_work:
+            if not fwd_work.is_completed():
+                ready_flag = False
+
+        if ready_flag:#not self.forward_work.is_alive(): #self.forward_work.is_completed(): #
             # print('Forward thread over')
             # print('Self forward ip: ', self.forward_ip)
             values = self.forward_ips
@@ -617,8 +632,13 @@ class Node():
         #     work = dist.irecv(self.backward_ip, self.rank_ + 1)
         #     self.backward_work = self.check_work_thread(work, type='recv_backward')
 
+        ready_flag = True
+        for bwd_work in self.backward_work:
+            if not bwd_work.is_completed():
+                ready_flag = False
+
         # if self.backward_work is not None:
-        if self.backward_work.is_completed():
+        if ready_flag:#self.backward_work.is_completed():
             # if not self.backward_work.is_alive():
             # print('Stem Backward recieved for: ', self.backward_pass_id)
             # print('Backward thread over')
