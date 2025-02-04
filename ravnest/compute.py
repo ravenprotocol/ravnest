@@ -3,6 +3,7 @@ import threading
 import time
 from .utils import *
 from .strings import *
+from .pipeline_split.modeling import get_pipeline_stage_submod
 
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
@@ -11,7 +12,8 @@ torch.jit.set_fusion_strategy([('STATIC',0), ('DYNAMIC', 0)])
 class Compute():
     def __init__(self, model = None, optimizer = None, compression = False,
                 latest_weights_buffer=None, latest_weights_lock=None,
-                input_tensors = None, tensor_id = None, 
+                input_tensors = None, tensor_id = None, rank=None,
+                layer_start_idx=None, layer_end_idx=None,
                 output_template = None, input_template = None,
                 node_type=None, backend='grpc', recompute=False,
                 submod_file = None, loss_filename = None, device = None):
@@ -39,6 +41,8 @@ class Compute():
         self.recompute_thread = None
         self.file_loss = 0
         self.version_update_lock = threading.Lock()
+
+        self.pipeline_stage = get_pipeline_stage_submod(self.model, rank, self.node_type, layer_start_idx, layer_end_idx)
         # self.recompute_stream = torch.cuda.Stream(self.device)
         # self.version_to_param[self.current_version] = self.get_params_clone()
         # self.latest_weights_lock.acquire(block=True)
@@ -90,9 +94,10 @@ class Compute():
 
         # with torch.no_grad():
         if tensors is not None:
-            output = self.model(tensors, **kwargs)
+            # output = self.model(tensors, **kwargs)
+            output = self.pipeline_stage.forward(tensors, **kwargs)
         else:
-            output = self.model(**kwargs)
+            output = self.pipeline_stage.forward(**kwargs)
         
         self.output_tensors[forward_pass_id] = output
 
@@ -354,40 +359,44 @@ class Compute():
         # print('Is training: ', self.model.training)
         with torch.no_grad():
             if tensors is not None:
-                output = self.model(tensors, **kwargs)
+                # output = self.model(tensors, **kwargs)
+                output = self.pipeline_stage.forward(tensors, **kwargs)
             else:
-                output = self.model(**kwargs)
+                # output = self.model(**kwargs)
+                output = self.pipeline_stage.forward(**kwargs)
         return output
 
-    def middle_no_grad_forward_compute(self, data):
+    def middle_no_grad_forward_compute(self, **kwargs):
         # print('Is training: ', self.model.training)
-        if self.backend == 'grpc':
-            model_args = self.create_no_grad_model_args(data)
-        else:
-            model_args = data
+        # if self.backend == 'grpc':
+        #     model_args = self.create_no_grad_model_args(data)
+        # else:
+        #     model_args = data
         # self.model.eval()
         with torch.no_grad():
-            if isinstance(model_args, torch.Tensor):
-                output = self.model(model_args)
-            else:    
-                output = self.model(*model_args)
+            # if isinstance(model_args, torch.Tensor):
+            #     output = self.model(model_args)
+            # else:    
+            # output = self.model(**kwargs)
+            output = self.pipeline_stage.forward(**kwargs)
         # with torch.no_grad():
         #     output = self.model(*model_args)
 
         return output
     
-    def leaf_no_grad_forward(self, data):
+    def leaf_no_grad_forward(self, **kwargs):
         # print('Is training: ', self.model.training)
-        if self.backend == 'grpc':
-            model_args = self.create_no_grad_model_args(data)
-        else:
-            model_args = data
+        # if self.backend == 'grpc':
+        #     model_args = self.create_no_grad_model_args(data)
+        # else:
+        #     model_args = data
         # self.model.eval()
         with torch.no_grad():
-            if isinstance(model_args, torch.Tensor):
-                output = self.model(model_args)
-            else:    
-                output = self.model(*model_args)
+            # if isinstance(model_args, torch.Tensor):
+            #     output = self.model(model_args)
+            # else:    
+            # output = self.model(**kwargs)
+            output = self.pipeline_stage.forward(**kwargs)
             # output = self.model(*model_args)
         return output
 

@@ -4,10 +4,12 @@ import psutil
 import pickle
 import shutil
 import time
+import torch
 import torch.distributed as dist
 
 from .communication import Communication_Torch, Communication_GRPC
 from .compute import Compute
+from .pipeline_split.split_spec import get_split_spec
 from .utils import *
 from .strings import *
 from .globals import g
@@ -55,19 +57,11 @@ class Node():
     :type kwargs: dict
     """
 
-    def __init__(self, name=None, model=None, optimizer=None, optimizer_params={}, update_frequency = 1, 
+    def __init__(self, model=None, optimizer=None, optimizer_params={}, update_frequency = 1, batch_size=None, seq_length=None,
                  reduce_factor=None, labels=None, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
                  loss_filename='losses.txt', recompute=False, backend = 'grpc', compression=False, average_optim=False, **kwargs):
-
+        
         self.backend = backend
-
-        node_metadata = load_node_json_configs(node_name=name)
-        kwargs.update(node_metadata)
-
-        self.node_type = kwargs.get('node_type', None)
-        self.template_path = kwargs.get('template_path', None)[:-1]
-        self.local_address = '{}:{}'.format(kwargs.get('local_host', None), kwargs.get('local_port', None))
-        self.name = name
         self.loss_filename = loss_filename
 
         self.reset()
@@ -82,52 +76,8 @@ class Node():
 
         # if not next(self.model.parameters()).is_cuda:
         #     self.model.to(device)
-        self.model.to(self.device)
 
-        # self.load_forward_buffer = self.manager.list()
-        # self.load_backward_buffer = self.manager.list()
-
-        if kwargs.get('ring_ids', None) is not None:
-            self.ring_ids = kwargs.get('ring_ids', None)
-
-        self.rank = kwargs.get('rank', None)
-        # print('\n Rank: ', self.rank)
-        self.ring_size = kwargs.get('ring_size', None)
         self.recompute = recompute
-        
-        self.ring_param_keys = {}
-        data_dict_keys = get_trainable_param_names(model=self.model)
-        for i, ring in enumerate(self.ring_ids.items()):
-            if i < len(self.ring_ids) - 1:
-                keys = data_dict_keys[data_dict_keys.index(ring[1]):data_dict_keys.index(self.ring_ids[ring[0]+1])]
-            else:
-                keys = data_dict_keys[data_dict_keys.index(ring[1]):]
-            
-            self.ring_param_keys[ring[0]] = keys
-
-        self.param_address_mapping = {}
-        param_addresses = kwargs.get('param_addresses', None)
-        self.retrieve_latest_params_data = {}
-        # print(param_addresses)
-        for i, address_to_param in enumerate(param_addresses.items()):
-            if i < len(param_addresses) - 1:
-                keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):data_dict_keys.index(param_addresses[list(param_addresses.keys())[i+1]])]
-            else:
-                keys = data_dict_keys[data_dict_keys.index(address_to_param[1]):]
-            
-            self.retrieve_latest_params_data[address_to_param[0]] = (keys[0], keys[-1])
-
-            for param_name in keys:
-                self.param_address_mapping[param_name] = address_to_param[0]
-
-        # print('Ring param keys: ', self.ring_param_keys.keys())
-        # print('Param address mapping: ', self.param_address_mapping)
-        # print('State dict: ', self.model.state_dict().keys())
-
-        self.forward_target_host = kwargs.get('forward_target_host', None)
-        self.forward_target_port = kwargs.get('forward_target_port', None)
-        self.backward_target_host = kwargs.get('backward_target_host', None)
-        self.backward_target_port = kwargs.get('backward_target_port', None)
 
         self.output_tensors = {}
         self.input_tensors = {}
@@ -146,9 +96,7 @@ class Node():
 
         self.reduce_threshold = self.update_frequency * reduce_factor
 
-        self.submod_file = kwargs.get('submod_file', None)
         self.node_status = NodeStatus.IDLE
-        self.tensor_id = '0_{}'.format(self.submod_file)#0
 
         self.averaged_params_buffer = {}
         self.average_no = 0
@@ -156,35 +104,49 @@ class Node():
         self.send_threads = []
 
         self.cluster_length = kwargs['cluster_length']
-        self.world_size = kwargs.get('cluster_length', None)
-        self.rank_ = kwargs.get('node_id', None)
-        self.forward_input_shapes=kwargs.get('input_shape', None)
-        self.backward_input_shapes=kwargs.get('output_shape', None)
+        self.batch_size = batch_size
+        self.forward_input_shapes=(batch_size, seq_length, self.model.config.hidden_size) #kwargs.get('input_shape', None)
+        self.backward_input_shapes=(batch_size, seq_length, self.model.config.hidden_size) #kwargs.get('output_shape', None)
 
-        if kwargs.get('submod_file', None) is not None:
-            with open('{}{}_input.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
-                self.input_template = pickle.load(fout)
-            with open('{}{}_output.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
-                self.output_template = pickle.load(fout)
-            # print(self.input_template)
-            self.model_inputs_template = None
+        # if kwargs.get('submod_file', None) is not None:
+        #     with open('{}{}_input.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
+        #         self.input_template = pickle.load(fout)
+        #     with open('{}{}_output.pkl'.format(kwargs.get('template_path', None), kwargs.get('submod_file', None)), 'rb') as fout:
+        #         self.output_template = pickle.load(fout)
+        #     # print(self.input_template)
+        #     self.model_inputs_template = None
+        #     if self.node_type == NodeTypes.ROOT:
+        #         with open('{}model_inputs.pkl'.format(kwargs.get('template_path', None)), 'rb') as fout:
+        #             self.model_inputs_template = pickle.load(fout)
+        #         self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
+        #     elif self.node_type == NodeTypes.LEAF:
+        #         self.optimizer = optimizer(self.model.parameters(), **optimizer_params)
+        #     elif self.node_type == NodeTypes.STEM:
+        #         self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
+
+        self.comm_session = self.init_comm_session()
+        self.node_type = self.comm_session.node_type
+
+        self.configure_model()
+
+        if self.optimizer is not None:
             if self.node_type == NodeTypes.ROOT:
-                with open('{}model_inputs.pkl'.format(kwargs.get('template_path', None)), 'rb') as fout:
-                    self.model_inputs_template = pickle.load(fout)
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
             elif self.node_type == NodeTypes.LEAF:
                 self.optimizer = optimizer(self.model.parameters(), **optimizer_params)
             elif self.node_type == NodeTypes.STEM:
                 self.optimizer = optimizer(current_model_params_clone(self.model), **optimizer_params)
+        
 
-        self.comm_session = self.init_comm_session()
-
-        self.compute_session = Compute(model = self.model, optimizer = self.optimizer, compression=self.compression,
-                                        input_tensors = self.input_tensors, tensor_id = self.tensor_id, output_template = self.output_template, 
-                                        input_template = self.input_template, node_type=self.node_type, backend=self.backend, recompute=self.recompute,
-                                        submod_file=self.submod_file, loss_filename=self.loss_filename, device = self.device) 
+        # self.compute_session = Compute(model = self.model, optimizer = self.optimizer, compression=self.compression,
+        #                                 input_tensors = self.input_tensors, tensor_id = self.tensor_id, output_template = self.output_template, 
+        #                                 input_template = self.input_template, node_type=self.node_type, backend=self.backend, recompute=self.recompute,
+        #                                 submod_file=self.submod_file, loss_filename=self.loss_filename, device = self.device) 
                                         #latest_weights_buffer = self.latest_weights_buffer, latest_weights_lock=self.latest_weights_lock, 
 
+        self.compute_session = Compute(model = self.model, optimizer = self.optimizer, compression=self.compression, rank=self.comm_session.rank,
+                                        input_tensors = self.input_tensors, node_type=self.node_type, backend=self.backend, recompute=self.recompute,
+                                        layer_start_idx = self.layer_start_idx, layer_end_idx = self.layer_end_idx, loss_filename=self.loss_filename, device = self.device) 
 
     def init_comm_session(self):
         assert self.backend in ['grpc', 'gloo', 'nccl'], 'Backend must be set to one of grpc, gloo or nccl'
@@ -218,19 +180,27 @@ class Node():
                                             model_inputs_template=self.model_inputs_template
                                             )
         else:
+            
+            
 
-            self.comm_session = Communication_Torch(node_type=self.node_type,
-                                                input_tensors=self.input_tensors,
-                                                backend=self.backend,
-                                                rank=self.rank_, #int(os.environ["RANK"])
-                                                world_size=self.world_size, #int(os.environ["WORLD_SIZE"])
-                                                forward_input_shapes=self.forward_input_shapes,
-                                                backward_input_shapes=self.backward_input_shapes,
-                                                device=self.device)
+            self.comm_session = Communication_Torch(input_tensors=self.input_tensors,
+                                                    backend=self.backend,
+                                                    forward_input_shapes=self.forward_input_shapes,
+                                                    backward_input_shapes=self.backward_input_shapes,
+                                                    device=self.device)
         
         return self.comm_session
+    
+    def configure_model(self):
+        split_spec_class = get_split_spec(self.model)
+        split_spec = split_spec_class(stage=self.comm_session.rank, node_type=self.node_type, model=self.model, num_stages=self.comm_session.world_size)
+        split_spec.configure_stage_model()
+        self.model.to(self.device)
+        self.layer_start_idx, self.layer_end_idx = split_spec.get_stage_layer_indices()
+        # if self.node_type == NodeTypes.STEM or self.node_type == NodeTypes.LEAF:
+        #     self.intermediate_input_keys = split_spec.get_intermediate_input_keys()
 
-    def check_forward_buffer(self, no_grad=False):
+    def check_forward_buffer(self, tensors=None, no_grad=False, **kwargs):
         monitor_flag_break = False
         outputs = None
         
@@ -271,7 +241,8 @@ class Node():
                     action = 'no_grad_' + action
                 else:
                     g.forward_done = True
-            outputs = getattr(self, action)(values) #, self.send_threads)
+            inputs = self.create_intermediate_input_args(values, **kwargs)
+            outputs = getattr(self, action)(**inputs) #, self.send_threads)
             monitor_flag_break = True
 
         self.node_status = NodeStatus.IDLE
@@ -328,7 +299,7 @@ class Node():
             if self.forward_pass_id - self.latest_backward_id <= self.cluster_length:
                 self.forward_compute(tensors, **kwargs)
         elif self.node_type == NodeTypes.STEM:
-            self.check_forward_buffer()
+            self.check_forward_buffer(tensors, **kwargs)
         else:
             outputs = self.monitor_forward_buffer()
         return outputs
@@ -487,13 +458,13 @@ class Node():
         #     # print('Sync')
         #     torch.cuda.synchronize()    
 
-    def no_grad_leaf_forward(self, value):  
-        if self.backend == 'grpc':  
-            data = value['data']
-        else:
-            data = value
+    def no_grad_leaf_forward(self, **kwargs):  
+        # if self.backend == 'grpc':  
+        #     data = value['data']
+        # else:
+        #     data = value
             # print('Received input no grad leaf: ', data[0])
-        output = self.compute_session.leaf_no_grad_forward(data)
+        output = self.compute_session.leaf_no_grad_forward(**kwargs)
         return output
 
     def no_grad_forward_compute(self, tensors=None, **kwargs):
@@ -572,16 +543,16 @@ class Node():
         self.n_forwards += 1
         # print('Forward Done Used RAM %: ', psutil.virtual_memory().percent)
 
-    def no_grad_stem_forward(self, value):
+    def no_grad_stem_forward(self, **kwargs):
         # self.comm_session.parallel_ring_reduce()
         self.node_status = NodeStatus.FORWARD
         # print('No grad forward')
-        if self.backend == 'grpc':
-            data = value['data']
-        else:
-            data = value
+        # if self.backend == 'grpc':
+        #     data = value['data']
+        # else:
+        #     data = value
         
-        outputs = self.compute_session.middle_no_grad_forward_compute(data)
+        outputs = self.compute_session.middle_no_grad_forward_compute(**kwargs)
         # self.trigger_forward_send(output)
 
         if isinstance(outputs, tuple):
@@ -661,6 +632,13 @@ class Node():
         if self.node_type == NodeTypes.LEAF:
             return fn(*args, **kwargs)
         return None
+    
+    def create_intermediate_input_args(self, received_inputs=None, **dataloader_kwargs):
+        input_kwargs = {}
+        for k,v in dataloader_kwargs.items():
+            input_kwargs[k] = v.to(self.device)
+        input_kwargs['hidden_states'] = received_inputs
+        return input_kwargs
     
     def trigger_send(self, data, type=None):
         # with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
