@@ -1,37 +1,41 @@
 import grpc
+import time
+import multiprocessing
 from threading import Thread
+from concurrent import futures
 import psutil
 import torch
 from contextlib import contextmanager
-from .utils import *
-from .strings import *
-from .protos.server_pb2_grpc import CommServerStub
-from .protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration, SendLatestWeights
+from ..utils import *
+from ..strings import *
+from .endpoints import GrpcService
+from ..protos.server_pb2_grpc import CommServerStub
+from ..protos.server_pb2_grpc import add_CommServerServicer_to_server
+from ..protos.server_pb2 import CheckBufferStatus, CheckReduceIteration, CheckGatherIteration, SendLatestWeights
 
-class Communication():
+mp = multiprocessing.get_context('spawn')
+
+class Communication_GRPC():
     def __init__(self, name=None, model=None, optimizer=None, node_type=None, rank=None, ring_size=None, ring_param_keys=None,
-                 ring_ids = None, param_address_mapping=None, reduce_lock=None, gather_lock=None, device = torch.device('cpu'),
+                 local_address=None, ring_ids = None, param_address_mapping=None, device = torch.device('cpu'),
                  compression=False, forward_target_host=None, forward_target_port=None,
                  backward_target_host=None, backward_target_port=None, retrieve_latest_params_data = None,
                  output_tensors=None, input_tensors=None,
-                 reduce_ring_buffers=None, gather_ring_buffers=None,
-                 reduce_iteration=None, gather_iteration=None,
                  submod_file=None, tensor_id=None, averaged_params_buffer=None,
                  average_no=None, average_optim=False, output_template=None, model_inputs_template=None):
         
         self.name = name
         self.model = model
+        self.local_address = local_address
         self.optimizer = optimizer
         self.node_type = node_type
         self.rank = rank
         self.ring_size = ring_size
         self.ring_param_keys = ring_param_keys
         self.ring_ids = ring_ids
+
         self.param_address_mapping = param_address_mapping
         self.retrieve_latest_params_data = retrieve_latest_params_data
-
-        self.reduce_lock = reduce_lock
-        self.gather_lock = gather_lock
 
         self.device = device
         self.compression = compression
@@ -43,12 +47,6 @@ class Communication():
         self.forward_target_port = forward_target_port
         self.backward_target_host = backward_target_host
         self.backward_target_port = backward_target_port
-
-        self.reduce_ring_buffers = reduce_ring_buffers
-        self.gather_ring_buffers = gather_ring_buffers
-
-        self.reduce_iteration = reduce_iteration
-        self.gather_iteration = gather_iteration
 
         self.submod_file = submod_file
         self.tensor_id = tensor_id
@@ -64,6 +62,28 @@ class Communication():
         
         self.model_inputs_template = model_inputs_template
 
+        self.manager = mp.Manager()
+        self.forward_lock = mp.Lock()
+        self.backward_lock = mp.Lock()
+        self.latest_weights_lock = mp.Lock()
+        self.reduce_lock = mp.Lock()
+        self.gather_lock = mp.Lock()
+
+        self.load_forward_buffer = self.manager.list()
+        self.load_backward_buffer = self.manager.list()
+        self.reduce_ring_buffers = self.manager.dict()
+        self.gather_ring_buffers = self.manager.dict()
+        self.latest_weights_buffer = self.manager.dict()
+        self.reduce_iteration = self.manager.dict()
+        self.gather_iteration = self.manager.dict()
+        self.start_server_flag = self.manager.Value(bool, False)
+
+        for ring_id, _ in self.ring_ids.items():
+            self.reduce_iteration[ring_id] = 0
+            self.gather_iteration[ring_id] = 0
+            
+
+        self.start_grpc_server()
 
     # def trigger_send(self, data, type=None, target_host=None, target_port=None):
     #     with grpc.insecure_channel('{}:{}'.format(target_host, target_port)) as channel:
@@ -76,6 +96,66 @@ class Communication():
     #             if buffer_status.status == BufferStatus.SEND_BUFFER:
     #                 send_flag = True
     #         response = stub.send_buffer(generate_stream(data, type=type))
+
+    def init_server(self, load_forward_buffer=None, load_backward_buffer=None, 
+                    reduce_ring_buffers = None, gather_ring_buffers = None, latest_weights_buffer=None, 
+                    forward_lock=None, backward_lock=None, reduce_lock=None, gather_lock=None,
+                    latest_weights_lock=None, reduce_iteration = None, gather_iteration = None):
+        """Initialize the gRPC server for handling communication with other nodes.
+
+        :param load_forward_buffer: Shared buffer for incoming forward pass data, defaults to None
+        :type load_forward_buffer: multiprocessing.Manager.list, optional
+        :param load_backward_buffer: Shared buffer for incoming backward pass data, defaults to None
+        :type load_backward_buffer: multiprocessing.Manager.list, optional
+        :param reduce_ring_buffers: Shared dictionary for reduce operation buffers, defaults to None
+        :type reduce_ring_buffers: multiprocessing.Manager.dict, optional
+        :param gather_ring_buffers: Shared dictionary for gather operation buffers, defaults to None
+        :type gather_ring_buffers: multiprocessing.Manager.dict, optional
+        :param forward_lock: Lock for synchronizing access to forward buffers, defaults to None
+        :type forward_lock: multiprocessing.Lock, optional
+        :param backward_lock: Lock for synchronizing access to backward buffers, defaults to None
+        :type backward_lock: multiprocessing.Lock, optional
+        :param reduce_lock: Lock for synchronizing reduce operations, defaults to None
+        :type reduce_lock: multiprocessing.Lock, optional
+        :param gather_lock: Lock for synchronizing gather operations, defaults to None
+        :type gather_lock: multiprocessing.Lock, optional
+        :param reduce_iteration: Shared dictionary for reduce iteration counts, defaults to None
+        :type reduce_iteration: multiprocessing.Manager.dict, optional
+        :param gather_iteration: Shared dictionary for gather iteration counts, defaults to None
+        :type gather_iteration: multiprocessing.Manager.dict, optional
+        """
+        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+        add_CommServerServicer_to_server(GrpcService(
+            load_forward_buffer=load_forward_buffer, load_backward_buffer=load_backward_buffer, 
+            reduce_ring_buffers=reduce_ring_buffers, gather_ring_buffers=gather_ring_buffers, 
+            latest_weights_buffer=latest_weights_buffer,
+            forward_lock=forward_lock, backward_lock=backward_lock, reduce_lock=reduce_lock, 
+            gather_lock=gather_lock,latest_weights_lock=latest_weights_lock,
+            reduce_iteration = reduce_iteration, gather_iteration = gather_iteration), self.server)
+        # print('Length of forward buffer: ', len(load_backward_buffer), os.getpid())
+
+
+    def grpc_server_serve(self):
+        """Starts the gRPC server and listens for incoming connections.
+        """
+        self.server.add_insecure_port(self.local_address)
+        self.server.start()
+        print('Listening on : ', self.local_address)
+        self.start_server_flag.value = True
+        self.server.wait_for_termination()
+
+    def start_grpc_server(self):
+        """Start the gRPC server and buffer checking threads.
+
+        Spawns a process for serving gRPC requests and starts a thread
+        for checking and processing incoming data buffers.
+        """
+        # print('Main process: ', os.getpid())
+        serve_process = mp.Process(target=self.grpc_server_serve, daemon=True)
+        serve_process.start()
+
+        while not self.start_server_flag.value:
+            time.sleep(0.5)
 
     @contextmanager
     def comm_channel_context(self, type=None, host=None, port=None):
@@ -362,3 +442,42 @@ class Communication():
                     payload['model_inputs'][k]['data'] = tensors[k]
 
         return payload
+    
+    def __getstate__(self):
+        print('Get state in Node')
+        return dict(
+            forward_lock = self.forward_lock,
+            backward_lock = self.backward_lock,
+            reduce_lock = self.reduce_lock,
+            gather_lock = self.gather_lock,
+            latest_weights_lock = self.latest_weights_lock,
+            local_address = self.local_address,
+            load_forward_buffer = self.load_forward_buffer,
+            load_backward_buffer = self.load_backward_buffer,
+            latest_weights_buffer = self.latest_weights_buffer,
+            reduce_ring_buffers = self.reduce_ring_buffers,
+            gather_ring_buffers = self.gather_ring_buffers,
+            reduce_iteration = self.reduce_iteration,
+            gather_iteration = self.gather_iteration,
+            start_server_flag = self.start_server_flag,
+            # comm_inner_pipe = self.comm_inner_pipe
+        )
+
+    def __setstate__(self, state):
+        print('Set state in Node')
+        self.local_address = state['local_address']
+        self.start_server_flag = state['start_server_flag']
+        # self.comm_inner_pipe = state['comm_inner_pipe']
+        self.init_server(load_forward_buffer=state['load_forward_buffer'], 
+                         load_backward_buffer=state['load_backward_buffer'], 
+                         reduce_ring_buffers= state['reduce_ring_buffers'],
+                         gather_ring_buffers= state['gather_ring_buffers'],
+                         latest_weights_buffer=state['latest_weights_buffer'],
+                         forward_lock=state['forward_lock'], 
+                         backward_lock=state['backward_lock'],
+                         reduce_lock=state['reduce_lock'],
+                         gather_lock=state['gather_lock'],
+                         latest_weights_lock = state['latest_weights_lock'],
+                         reduce_iteration = state['reduce_iteration'],
+                         gather_iteration = state['gather_iteration'],
+                         )

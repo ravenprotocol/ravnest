@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import time
 import datasets
-from .node import Node
+from .node_tcp import Node
 from .utils import no_schedule
 from .strings import *
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
@@ -263,8 +263,8 @@ class BaseTrainerFullAsync():
         self.node.model.train()
         self.await_backwards()
         print('Training Done!: ', time.time() - t1, ' seconds', total)
-        
-        self.node.comm_session.parallel_ring_reduce()
+        if self.node.backend == 'grpc':
+            self.node.comm_session.parallel_ring_reduce()
         # print('Training Done!: ', time.time() - t1, ' seconds')
 
         if self.save:

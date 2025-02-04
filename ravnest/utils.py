@@ -3,6 +3,7 @@ import glob
 import json
 import torch
 import asyncio
+import time
 import random
 if torch.cuda.is_available():
     import nvidia_smi
@@ -260,6 +261,7 @@ def no_schedule():
             # print('Globals Forward done: ', g.forward_done)
             while not g.forward_done:
                 train_step(*args, **kwargs)
+                time.sleep(0)
             g.forward_done = False
             return
         return wrapper
