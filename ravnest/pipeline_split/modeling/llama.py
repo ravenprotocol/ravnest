@@ -51,7 +51,10 @@ class BaseLlamaModel():
         if self.node_type == NodeTypes.ROOT:
             if input_ids is not None and inputs_embeds is not None:
                 raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-            
+            elif input_ids is not None:
+                batch_size, seq_length = input_ids.shape[:2]
+            elif inputs_embeds is not None:
+                batch_size, seq_length = inputs_embeds.shape[:2]
             if inputs_embeds is None:
                 inputs_embeds = self.llama_model.embed_tokens(input_ids)
             
@@ -70,7 +73,7 @@ class BaseLlamaModel():
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+                past_seen_tokens, past_seen_tokens + seq_length, device=device
             )
 
 
