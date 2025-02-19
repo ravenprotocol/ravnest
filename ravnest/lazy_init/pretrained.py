@@ -1,3 +1,5 @@
+# Based on https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/lazy/pretrained.py
+
 import copy
 import os
 from typing import Callable, Optional, Union

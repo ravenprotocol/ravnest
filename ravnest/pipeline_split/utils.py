@@ -194,4 +194,37 @@ def load_stage_weights_from_checkpoint(model, checkpoint_index_file:Path):
     if len(remain_keys) > 0:
         print(f"The following keys are not loaded from checkpoint: {remain_keys}")
 
-    
+def is_safetensor_checkpoint(checkpoint_file_path: str) -> bool:
+    if checkpoint_file_path.endswith(".safetensors"):
+        return True
+    else:
+        return False
+
+# Based on load_state_dict from https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/checkpoint_io/utils.py#L90
+def load_state_dict(checkpoint_file_path: Path):
+    """
+    Load state dict from checkpoint.
+
+    Args:
+        checkpoint_file_path (Path): path to the checkpoint file.
+
+    Returns:
+        dict: state dict.
+    """
+
+    # assert not is_dtensor_checkpoint(
+    #     checkpoint_file_path
+    # ), f"Cannot load state dict from dtensor checkpoint {checkpoint_file_path}, you should convert the distributed tensors to gathered tensors with our CLI offline."
+
+    if is_safetensor_checkpoint(checkpoint_file_path):
+        from safetensors import safe_open
+
+        state_dict = {}
+        with safe_open(checkpoint_file_path, framework="pt", device="cpu") as f:
+            for k in f.keys():
+                state_dict[k] = f.get_tensor(k)
+        return state_dict
+
+    else:
+        # load with torch
+        return torch.load(checkpoint_file_path, map_location=torch.device("cpu"))

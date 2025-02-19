@@ -11,9 +11,9 @@ class BaseSplitSpec():
         layers_per_stage = self.get_layers_per_stage(num_layers)
         num_layers_per_stage_accumulated = np.insert(np.cumsum(layers_per_stage), 0, 0)
 
-        start_idx = num_layers_per_stage_accumulated[self.stage]
-        end_idx = num_layers_per_stage_accumulated[self.stage + 1]
-        return [start_idx, end_idx]
+        self.start_idx = num_layers_per_stage_accumulated[self.stage]
+        self.end_idx = num_layers_per_stage_accumulated[self.stage + 1]
+        return [self.start_idx, self.end_idx]
     
     def get_layers_per_stage(self, num_layers):
         quotient = num_layers // self.num_stages
@@ -32,6 +32,3 @@ class BaseSplitSpec():
         Configures model for this pipeline stage by retaining only the required layers
         '''
         ...
-    
-    # def get_intermediate_input_keys(self):
-    #     return ("hidden_states",)

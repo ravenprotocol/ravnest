@@ -92,21 +92,18 @@ class BaseLlamaModel():
 
         causal_mask = self.llama_model._update_causal_mask(
             attention_mask, hidden_states, cache_position, past_key_values, output_attentions
-        ) #inputs_embeds
+        )
 
-        # create position embeddings to be shared across the decoder layers
         position_embeddings = self.llama_model.rotary_emb(hidden_states, position_ids)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        # for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-        for decoder_layer in self.llama_model.layers[self.start_index:self.end_index]:
+        for i, decoder_layer in enumerate(self.llama_model.layers[self.start_index:self.end_index]):
         
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
 
             layer_outputs = decoder_layer(
                 hidden_states,

@@ -255,6 +255,9 @@ def model_fusion(cluster_id = 0):
     else:
         print('Submodels not found!')
 
+def get_torch_dtype(dtype):
+    return getattr(torch, dtype)
+
 def no_schedule():
     def repeat_fn(train_step):
         def wrapper(*args, **kwargs):
@@ -266,3 +269,27 @@ def no_schedule():
             return
         return wrapper
     return repeat_fn
+
+def sample_token_from_logits(logits, top_k, temperature):
+    if top_k == 1:
+        token_id = torch.argmax(logits, dim=-1, keepdims=True)
+    else:
+        logits = logits.clone()
+        if temperature != 1.0:
+            logits.div_(temperature)
+        if top_k > 1:
+            assert top_k <= logits.size(1), 'top-k is larger than logit size.'
+            filter_ = logits < torch.topk(logits, top_k)[0][..., -1, None]
+            logits.masked_fill_(filter_, float('-Inf'))
+
+        probabilities = logits.softmax(dim=-1)
+        token_id = torch.multinomial(probabilities, num_samples=1).view(-1)
+    
+    return token_id
+
+def tokenizer_decode_batch(batch_input_ids, tokenizer):
+    decoded_outputs = []
+    batch_input_ids = batch_input_ids.cpu()
+    for sequence in batch_input_ids:
+        decoded_outputs.append(tokenizer.decode(sequence, skip_special_tokens=True))
+    return decoded_outputs

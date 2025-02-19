@@ -23,3 +23,7 @@ class NodeStatus(object):
     REDUCING = "reducing"
     GATHERING = "gathering"
     IDLE = "idle"
+
+class NodeModes(object):
+    TRAIN = "train"
+    INFERENCE = "inference"
