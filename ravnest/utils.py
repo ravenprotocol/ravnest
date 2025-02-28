@@ -272,7 +272,7 @@ def no_schedule():
 
 def sample_token_from_logits(logits, top_k, temperature):
     if top_k == 1:
-        token_id = torch.argmax(logits, dim=-1, keepdims=True)
+        token_id = torch.argmax(logits, dim=-1) #, keepdims=True)
     else:
         logits = logits.clone()
         if temperature != 1.0:

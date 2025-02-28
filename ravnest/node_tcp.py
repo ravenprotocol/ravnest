@@ -6,6 +6,7 @@ import shutil
 import time
 import torch
 import torch.distributed as dist
+from datetime import timedelta
 
 from .communication import Communication_Torch, Communication_GRPC
 from .compute import Compute
@@ -58,7 +59,7 @@ class Node():
     """
 
     def __init__(self, model=None, optimizer=None, optimizer_params={}, update_frequency = 1, batch_size=None, seq_length=None, cluster_length=None,
-                 reduce_factor=None, labels=None, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), dtype='float16',
+                 dist_timeout=10, reduce_factor=None, labels=None, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), dtype='float16',
                  mode=NodeModes.TRAIN, loss_filename='losses.txt', recompute=False, backend = 'grpc', compression=False, average_optim=False, **kwargs):
         
         self.backend = backend
@@ -73,6 +74,7 @@ class Node():
         
         self.device = device
         self.compression = compression
+        self.dist_timeout = timedelta(minutes = dist_timeout)
 
         self.recompute = recompute
 
@@ -106,7 +108,7 @@ class Node():
         self.batch_size = batch_size
         self.forward_input_shapes=[[batch_size, seq_length, self.model.config.hidden_size]]
         self.backward_input_shapes=[[batch_size, seq_length, self.model.config.hidden_size]]
-        self.feedback_shape = (batch_size,1)
+        self.feedback_shape = [batch_size] #,1]
 
         self.comm_session = self.init_comm_session()
         self.node_type = self.comm_session.node_type
@@ -153,6 +155,7 @@ class Node():
             
 
             self.comm_session = Communication_Torch(input_tensors=self.input_tensors,
+                                                    dist_timeout = self.dist_timeout,
                                                     backend=self.backend, mode=self.mode,
                                                     forward_input_shapes=self.forward_input_shapes,
                                                     backward_input_shapes=self.backward_input_shapes,
@@ -171,6 +174,7 @@ class Node():
         self.layer_start_idx, self.layer_end_idx = split_spec.start_idx, split_spec.end_idx
         print('self.layer_start_idx: ', self.layer_start_idx)
         print('self.layer_end_idx: ', self.layer_end_idx)
+        print('Attention mechanism: ', self.model.config._attn_implementation)
 
     def check_forward_buffer(self, tensors=None, no_grad=False, **kwargs):
         monitor_flag_break = False
