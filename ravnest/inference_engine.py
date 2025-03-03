@@ -1,5 +1,6 @@
 import torch
 import math
+from .memory_tracker import MemoryTracker
 from .strings import *
 from .utils import *
 
@@ -7,13 +8,17 @@ MAX_NUM_TOKENS = 5000
 
 class InferenceEngine():
 
-    def __init__(self, node, tokenizer):
+    def __init__(self, node, tokenizer, track_mem_usage=True):
         self.node = node
         self.tokenizer = tokenizer
         self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         self.node_type = self.node.node_type
         self.comm_session = self.node.comm_session
         self.is_pipelining = False
+        self.track_mem_usage = track_mem_usage
+        if self.track_mem_usage:
+            self.memory_tracker = MemoryTracker(self.comm_session, self.node.device)
+            self.memory_tracker.update_metrics()
 
     def get_microbatch_inputs(self, start_id, end_id, input_ids=None, **kwargs):
         microbatch_kwargs = {}
@@ -93,6 +98,8 @@ class InferenceEngine():
             if outputs is not None:
                 outputs = outputs.logits
         # print('Torch memory allocated and reserved after batch: ', torch.cuda.memory_allocated(), torch.cuda.memory_reserved())
+        if self.track_mem_usage:
+            self.memory_tracker.update_metrics()
         return outputs
 
     def broadcast_prompt_list(self, prompt_list):
@@ -149,6 +156,10 @@ class InferenceEngine():
                 kwargs['attention_mask'] = torch.cat((kwargs['attention_mask'], new_token_mask), axis=-1)
 
             is_generation_done = self.is_generation_complete(is_generation_done, next_token_ids, num_generated_tokens, max_seq_lengths)
+            
+            if torch.all(is_generation_done):
+                break
+
         return input_ids #tokenizer_decode_batch(input_ids, self.tokenizer)
 
     def generate(self, prompt_list=None, max_seq_lengths=None, top_k=1, temperature=1.0):
@@ -157,5 +168,7 @@ class InferenceEngine():
         generated_tokens = self._generate(**tokenized_and_padded_batch, 
                                         max_seq_lengths=max_seq_lengths, 
                                         top_k=top_k, temperature=temperature)
+        if self.track_mem_usage:
+            self.memory_tracker.update_metrics()
         return self.tokenizer_decode_batch(generated_tokens)
 

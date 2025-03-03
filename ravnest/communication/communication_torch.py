@@ -106,6 +106,9 @@ class Communication_Torch():
 
     def broadcast_metadata_objects(self, data):
         dist.broadcast_object_list(data, 0, group=self.metadata_grp)
+
+    def gather_at_root(self, data, gather_list=None):
+        dist.gather(data, gather_list, dst=0, group=self.memory_track_grp)
     
     def forward_recv_works_done(self):
         ready_flag = True
@@ -137,6 +140,7 @@ class Communication_Torch():
         if self.mode == NodeModes.INFERENCE:
             self.metadata_grp = dist.new_group([i for i in range(self.world_size)], timeout=self.dist_timeout)
             self.feedback_grp = dist.new_group([i for i in range(self.world_size)], timeout=self.dist_timeout)
+            self.memory_track_grp = dist.new_group([i for i in range(self.world_size)], timeout=self.dist_timeout)
 
         if self.node_type == NodeTypes.ROOT:
             self.nxt_grp_fwd = self.proc_grps[self.rank]['forward']
@@ -171,10 +175,15 @@ class Communication_Torch():
                 # w_recv = dist.irecv(torch.tensor([0]).to(self.device), self.world_size - 1, group=self.feedback_grp)
                 w_recv = dist.broadcast(torch.tensor([0]).to(self.device), self.world_size - 1, group=self.feedback_grp, async_op=True)
                 w_send_metadata = dist.broadcast(torch.tensor([0]).to(self.device), self.rank, group=self.metadata_grp, async_op=True)
+
+                gather_list = [torch.tensor(0).to(self.device)]*self.world_size
+                w_gather = dist.gather(torch.tensor(1).to(self.device), gather_list, dst=self.rank, group=self.memory_track_grp, async_op=True)
+
             w_send.wait()
             w_recv.wait()
             if self.mode == NodeModes.INFERENCE:
                 w_send_metadata.wait()
+                w_gather.wait()
 
         elif self.node_type == NodeTypes.STEM:
             w_recv = dist.irecv(torch.tensor([0]).to(self.device), self.rank - 1, group=self.prv_grp_fwd)
@@ -192,6 +201,10 @@ class Communication_Torch():
                 w_recv.wait()
                 w_recv = dist.broadcast(torch.tensor([0]).to(self.device), 0, group=self.metadata_grp, async_op=True)
                 w_recv.wait()
+
+                gather_list = None
+                w_gather = dist.gather(torch.tensor(1).to(self.device), gather_list, dst=0, group=self.memory_track_grp, async_op=True)
+                w_gather.wait()
         else:
             w_recv = dist.irecv(torch.tensor([0]).to(self.device), self.rank - 1, group=self.prv_grp_fwd)
             if self.mode == NodeModes.TRAIN:
@@ -200,10 +213,14 @@ class Communication_Torch():
                 # w_send = dist.isend(torch.tensor([1]).to(self.device), 0, group=self.feedback_grp)
                 w_send = dist.broadcast(torch.tensor([1]).to(self.device), self.rank, group=self.feedback_grp, async_op=True)
                 w_recv_metadata = dist.broadcast(torch.tensor([0]).to(self.device), 0, group=self.metadata_grp, async_op=True)
+
+                gather_list = None
+                w_gather = dist.gather(torch.tensor(1).to(self.device), gather_list, dst=0, group=self.memory_track_grp, async_op=True)
             w_recv.wait()
             w_send.wait()
             if self.mode == NodeModes.INFERENCE:
                 w_recv_metadata.wait()
+                w_gather.wait()
 
     def create_cuda_streams(self):
         if self.node_type == NodeTypes.ROOT:
