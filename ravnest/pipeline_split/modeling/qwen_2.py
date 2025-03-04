@@ -35,6 +35,7 @@ class BaseQwen2Model():
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        hidden_states: Optional[torch.FloatTensor] = None,
         **flash_attn_kwargs: Unpack[FlashAttentionKwargs],
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
@@ -168,6 +169,7 @@ class Qwen2ForCausalLMPipelineStage(BaseQwen2Model):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        hidden_states: Optional[torch.FloatTensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -190,6 +192,7 @@ class Qwen2ForCausalLMPipelineStage(BaseQwen2Model):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            hidden_states = hidden_states,
             **kwargs,
         )
 
