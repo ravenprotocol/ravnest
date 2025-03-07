@@ -7,10 +7,7 @@ from ravnest.inference import InferenceEngine
 
 device = torch.device('cuda')
 
-# model_name = 'meta-llama/Llama-3.2-1B' 
-# model_name = 'meta-llama/Llama-3.1-8B'
-# model_name = 'deepseek-ai/DeepSeek-R1-Distill-Llama-8B'
-model_name = 'meta-llama/Llama-3.1-8B-Instruct'
+model_name = 'Qwen/Qwen2.5-14B-Instruct'
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -26,7 +23,7 @@ model.eval()
 
 print('Model: ', model)
 
-user_inputs = []
+user_inputs = ['Hello, how are you?', 'Write a rap on quantum mechanics.', 'It was a starry night', 'Write a story about a giant who lived in a land of small people']
 prompts = [f"""### Instruction:
 You are a helpful AI assistant. Answer the user's request concisely.
 
@@ -55,4 +52,4 @@ inference_engine = InferenceEngine(node, tokenizer)
 outputs = inference_engine.generate(prompts, max_seq_lengths=max_seq_lengths)
 print('Generated: ', outputs)
 
-# torchrun --nnodes=3 --nproc_per_node=1 --node_rank=0 --master_addr=localhost --master_port=29500 examples/llama/inference_with_eng.py
+# torchrun --nnodes=3 --nproc_per_node=1 --node_rank=0 --master_addr=localhost --master_port=29500 examples/qwen/inference.py

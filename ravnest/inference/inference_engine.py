@@ -1,10 +1,10 @@
 import torch
 import math
 from .memory_tracker import MemoryTracker
-from .strings import *
-from .utils import *
+from ..strings import *
+from ..utils import *
 
-MAX_NUM_TOKENS = 5000
+MAX_NUM_TOKENS = 1500
 
 class InferenceEngine():
 
@@ -72,7 +72,6 @@ class InferenceEngine():
             else:
                 start = mb_id * mbs
             end = start + mbs #min(start + mbs, bs)
-
             microbatch_input_ids, microbatch_kwargs = self.get_microbatch_inputs(start, end, input_ids=input_ids, **kwargs)
             self.comm_session.forward_input_shapes[0][0] = mbs
             microbatch_outputs = self.node.no_grad_forward(input_ids=microbatch_input_ids, **microbatch_kwargs)

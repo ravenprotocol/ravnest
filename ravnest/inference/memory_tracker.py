@@ -1,6 +1,6 @@
 import torch
 import psutil
-from .strings import *
+from ..strings import *
 
 class MemoryTracker():
     def __init__(self, comm_session=None, device=None):
