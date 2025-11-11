@@ -1,14 +1,15 @@
 import torch
 import math
 from .memory_tracker import MemoryTracker
+from .kv_cache import PagedAttentionEngine
 from ..strings import *
 from ..utils import *
 
-MAX_NUM_TOKENS = 1500
+MAX_NUM_TOKENS = 3000
 
 class InferenceEngine():
 
-    def __init__(self, node, tokenizer, track_mem_usage=True):
+    def __init__(self, node, tokenizer, track_mem_usage=True, use_kv_cache=True):
         self.node = node
         self.tokenizer = tokenizer
         self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
@@ -16,6 +17,20 @@ class InferenceEngine():
         self.comm_session = self.node.comm_session
         self.is_pipelining = False
         self.track_mem_usage = track_mem_usage
+        
+        self.cache_manager = None
+        self.k_caches = None
+        self.v_caches = None
+        if use_kv_cache:
+            self.use_prefill = True
+            self.kv_cache_engine = PagedAttentionEngine(device=self.node.device, 
+                                              dtype=self.comm_session.dtype, 
+                                              num_shard_layers = self.node.layer_end_idx - self.node.layer_start_idx,
+                                              model_config=self.node.model.config,
+                                              max_batch_size=4, max_seq_length_during_gen=MAX_NUM_TOKENS,
+                                              block_size=4
+                                            )
+
         if self.track_mem_usage:
             self.memory_tracker = MemoryTracker(self.comm_session, self.node.device)
             self.memory_tracker.update_metrics()
@@ -28,7 +43,9 @@ class InferenceEngine():
 
     def tokenize_and_pad_batch(self, prompts: list, add_special_tokens: bool = True):
         prompt_tokens = self.tokenizer(prompts, add_special_tokens=add_special_tokens, padding=True, padding_side='left', return_tensors="pt")
-        return prompt_tokens
+        no_pad_locs = torch.where(prompt_tokens['input_ids'] != self.tokenizer.pad_token_id, 1, 0)
+        seq_lengths = no_pad_locs.sum(dim=-1)
+        return prompt_tokens.to(self.node.device), seq_lengths
 
     def tokenizer_decode_batch(self, batch_input_ids):
         decoded_outputs = []
@@ -93,6 +110,18 @@ class InferenceEngine():
             outputs = self.pipelined_forward(bs, mbs_list, input_ids=input_ids, **kwargs)
         else:
             self.comm_session.forward_input_shapes[0][0] = bs
+            if self.use_prefill:
+                # prefill = kwargs.get('prefill', False)
+                # if prefill:
+                #     seq_len_dim = input_ids.shape[1]
+                # else:
+                #     seq_len_dim = 1
+                seq_len_dim = input_ids.shape[1]
+                
+            else:
+                seq_len_dim = input_ids.shape[1]
+
+            self.comm_session.forward_input_shapes[0][1] = seq_len_dim#input_ids.shape[1]
             outputs = self.node.no_grad_forward(input_ids=input_ids, **kwargs)
             if outputs is not None:
                 outputs = outputs.logits
@@ -124,7 +153,7 @@ class InferenceEngine():
 
     # @torch.no_grad()
     @torch.inference_mode()
-    def _generate(self, input_ids=None, max_seq_lengths=None, top_k=1, temperature=1.0, **kwargs):
+    def _generate(self, input_ids=None, max_seq_lengths=None, top_k=1, temperature=1.0, context_lengths=None, **kwargs):
         
         bs, mbs_list, seq_length, max_seq_length_in_batch, max_seq_lengths = self.configure_pipelining(input_ids, max_seq_lengths)
         num_generated_tokens = 0
@@ -133,7 +162,21 @@ class InferenceEngine():
         while num_generated_tokens < max_seq_length_in_batch:
             self.comm_session.forward_input_shapes[0][1] = seq_length #input_ids.shape[1]
 
-            output_logits = self.batch_forward(bs=bs, mbs_list=mbs_list, input_ids=input_ids, **kwargs)
+            if self.use_prefill and num_generated_tokens == 0:
+                prefill = True
+            else:
+                prefill = False
+                self.kv_cache_engine.allocate_block_tables_for_new_tokens(input_ids, context_lengths)
+
+            output_logits = self.batch_forward(bs=bs, 
+                                              mbs_list=mbs_list, 
+                                              input_ids=input_ids,# if prefill else input_ids[:,-1].unsqueeze(-1), 
+                                              prefill=prefill, 
+                                              k_caches=self.k_caches,
+                                              v_caches=self.v_caches,
+                                              block_tables=self.kv_cache_engine.get_block_tables(bs),
+                                              context_lengths=context_lengths,
+                                              **kwargs)
 
             if self.node_type == NodeTypes.LEAF:
                 last_token_logits = output_logits[:, -1, :]
@@ -144,8 +187,9 @@ class InferenceEngine():
                 while not self.comm_session.feedback_recv_work_done():
                     time.sleep(0)
                 next_token_ids = self.comm_session.feedback_ip
-            
+            # print('Next token ids: ', next_token_ids)
             seq_length += 1
+            context_lengths += 1
             num_generated_tokens += 1
             next_token_ids = torch.where(is_generation_done, pad_token_tensor, next_token_ids)
             input_ids = torch.cat((input_ids, next_token_ids[:,None]), dim=-1)
@@ -158,16 +202,31 @@ class InferenceEngine():
             
             if torch.all(is_generation_done):
                 break
+            
+            # break
 
         return input_ids #tokenizer_decode_batch(input_ids, self.tokenizer)
 
     def generate(self, prompt_list=None, max_seq_lengths=None, top_k=1, temperature=1.0):
         prompt_list = self.broadcast_prompt_list(prompt_list)        
-        tokenized_and_padded_batch = self.tokenize_and_pad_batch(prompt_list).to(self.node.device)
+        tokenized_and_padded_batch, unpadded_seq_lengths = self.tokenize_and_pad_batch(prompt_list)#.to(self.node.device)
+        print('Unpadded seq lengths: ', unpadded_seq_lengths)
+        print('tokenized_and_padded_batch:', tokenized_and_padded_batch['input_ids'].shape, len(tokenized_and_padded_batch))
+        if self.use_prefill:
+            self.kv_cache_engine.allocate_block_tables_for_batch(tokenized_and_padded_batch['input_ids'], unpadded_seq_lengths)
+            self.k_caches, self.v_caches = self.kv_cache_engine.get_kv_caches()
+
         generated_tokens = self._generate(**tokenized_and_padded_batch, 
                                         max_seq_lengths=max_seq_lengths, 
-                                        top_k=top_k, temperature=temperature)
-        if self.track_mem_usage:
-            self.memory_tracker.update_metrics()
+                                        top_k=top_k, temperature=temperature,
+                                        context_lengths=unpadded_seq_lengths)
+
+        # for i in range(5):
+        #     k_cache = self.k_caches[i]
+        #     print('\nLayer: ', i)
+        #     print('k_cache: ', k_cache[0], k_cache[18])
+        # if self.track_mem_usage:
+        #     self.memory_tracker.update_metrics()
+        print('Generated tokens: ', generated_tokens.shape)
         return self.tokenizer_decode_batch(generated_tokens)
 
