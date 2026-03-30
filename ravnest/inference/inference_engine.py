@@ -1,3 +1,4 @@
+import time
 import torch
 import math
 from .memory_tracker import MemoryTracker
@@ -184,8 +185,11 @@ class InferenceEngine():
                 self.comm_session.trigger_feedback_send(next_token_ids)
             else:
                 self.comm_session.start_feedback_recv()
+                feedback_wait_start = time.time()
                 while not self.comm_session.feedback_recv_work_done():
-                    time.sleep(0)
+                    if time.time() - feedback_wait_start > 30:
+                        raise RuntimeError("feedback_recv timed out after 30s — node-1 may have crashed")
+                    time.sleep(0.001)
                 next_token_ids = self.comm_session.feedback_ip
             # print('Next token ids: ', next_token_ids)
             seq_length += 1
