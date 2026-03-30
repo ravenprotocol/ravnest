@@ -301,11 +301,8 @@ class Node():
                 input_ids = torch.cat((input_ids, next_token_ids), dim=-1)
             else:
                 self.comm_session.start_feedback_recv()
-                feedback_wait_start = time.time()
                 while not self.comm_session.feedback_recv_work_done():
-                    if time.time() - feedback_wait_start > 30:
-                        raise RuntimeError("feedback_recv timed out after 30s — node-1 may have crashed")
-                    time.sleep(0.001)
+                    time.sleep(0)
                 next_token_ids = self.comm_session.feedback_ip
                 input_ids = torch.cat((input_ids, next_token_ids), dim=-1)
             self.num_generated_tokens += 1
