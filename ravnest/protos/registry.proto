@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+service NodeRegistryService {
+  rpc Register   (RegisterRequest)   returns (RegisterResponse)   {}
+  rpc Heartbeat  (HeartbeatRequest)  returns (HeartbeatResponse)  {}
+  rpc Deregister (DeregisterRequest) returns (DeregisterResponse) {}
+  rpc Discover   (DiscoverRequest)   returns (DiscoverResponse)   {}
+  rpc GetNode    (GetNodeRequest)    returns (GetNodeResponse)    {}
+}
+
+// Describes a single node's static identity and resources.
+message NodeInfo {
+  string node_id        = 1;
+  string node_type      = 2;  // pipeline_compute | standalone_compute | agent | data_source
+  string subtype        = 3;  // ravnest | vllm | sglang | ollama | openai_compat | research | sql | rag | text | vector_db | graph_db | ...
+  string address        = 4;  // host:port of this node's own gRPC server
+  int64  ram_mb         = 5;
+  int64  vram_mb        = 6;
+  float  bandwidth_mbps = 7;
+  int64  disk_gb        = 8;
+  int32  cpu_cores      = 9;
+  repeated string models = 10;  // model names this node can serve (compute/agent nodes)
+  string metadata        = 11;  // JSON blob for subtype-specific extra info
+  int64  registered_at   = 12;  // unix timestamp (seconds)
+}
+
+// Live load snapshot reported with each heartbeat.
+message LoadInfo {
+  float cpu_percent      = 1;
+  float ram_percent      = 2;
+  float gpu_percent      = 3;
+  float gpu_vram_percent = 4;
+}
+
+// ----- Register -----
+message RegisterRequest  { NodeInfo node_info = 1; }
+message RegisterResponse { bool success = 1; string message = 2; }
+
+// ----- Heartbeat -----
+message HeartbeatRequest  { string node_id = 1; LoadInfo load = 2; }
+message HeartbeatResponse { bool acknowledged = 1; }
+
+// ----- Deregister -----
+message DeregisterRequest  { string node_id = 1; }
+message DeregisterResponse { bool success = 1; }
+
+// ----- Discover -----
+message DiscoverRequest {
+  string          node_type = 1;  // empty = any type
+  string          subtype   = 2;  // empty = any subtype
+  repeated string models    = 3;  // empty = any; non-empty = node must serve at least one
+}
+
+message NodeEntry {
+  NodeInfo node_info      = 1;
+  LoadInfo current_load   = 2;
+  int64    last_heartbeat = 3;  // unix timestamp (seconds)
+}
+
+message DiscoverResponse { repeated NodeEntry nodes = 1; }
+
+// ----- GetNode -----
+message GetNodeRequest  { string node_id = 1; }
+message GetNodeResponse { NodeEntry node = 1; bool found = 2; }
