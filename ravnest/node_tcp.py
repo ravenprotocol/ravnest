@@ -1,4 +1,5 @@
 import multiprocessing
+import socket
 from threading import Thread
 import psutil
 import pickle
@@ -60,7 +61,8 @@ class Node():
 
     def __init__(self, model=None, optimizer=None, optimizer_params={}, update_frequency = 1, batch_size=None, seq_length=None, cluster_length=None,
                  dist_timeout=10, reduce_factor=None, labels=None, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), dtype='float16',
-                 mode=NodeModes.TRAIN, loss_filename='losses.txt', recompute=False, backend = 'grpc', compression=False, average_optim=False, **kwargs):
+                 mode=NodeModes.TRAIN, loss_filename='losses.txt', recompute=False, backend = 'grpc', compression=False, average_optim=False,
+                 registry_address=None, **kwargs):
         
         self.backend = backend
         self.loss_filename = loss_filename
@@ -117,7 +119,63 @@ class Node():
 
         self.compute_session = Compute(model = self.model, compression=self.compression, rank=self.comm_session.rank,
                                         input_tensors = self.input_tensors, node_type=self.node_type, backend=self.backend, recompute=self.recompute,
-                                        layer_start_idx = self.layer_start_idx, layer_end_idx = self.layer_end_idx, loss_filename=self.loss_filename, device = self.device) 
+                                        layer_start_idx = self.layer_start_idx, layer_end_idx = self.layer_end_idx, loss_filename=self.loss_filename, device = self.device)
+
+        self._registry_client  = None
+        self._heartbeat_sender = None
+        if registry_address:
+            self._register_with_registry(registry_address)
+
+    def _register_with_registry(self, registry_address: str):
+        """Announce this pipeline node to the registry and start heartbeating."""
+        try:
+            from .registry import (
+                RegistryClient, HeartbeatSender,
+                NodeCapability, NodeType, ComputeSubtype, ResourceSpec,
+            )
+            rank     = self.comm_session.rank
+            hostname = socket.gethostname()
+            # Use the local gRPC address when available, otherwise hostname:0
+            address  = getattr(self, "local_address", None) or f"{hostname}:0"
+            node_id  = f"ravnest_rank{rank}_{hostname}"
+
+            cap = NodeCapability(
+                node_id   = node_id,
+                node_type = NodeType.PIPELINE_COMPUTE,
+                subtype   = ComputeSubtype.RAVNEST,
+                address   = address,
+                resources = ResourceSpec.from_system(),
+                models    = [type(self.model).__name__],
+                metadata  = {
+                    "rank":       rank,
+                    "world_size": self.comm_session.world_size,
+                    "node_type":  self.node_type,
+                    "backend":    self.backend,
+                },
+            )
+
+            self._registry_client = RegistryClient(registry_address)
+            self._registry_client.register(cap)
+
+            self._heartbeat_sender = HeartbeatSender(self._registry_client, node_id)
+            self._heartbeat_sender.start()
+
+            print(f"[Registry] Registered as {node_id} with registry at {registry_address}")
+        except Exception as exc:
+            print(f"[Registry] Registration failed (non-fatal): {exc}")
+
+    def deregister_from_registry(self):
+        """Gracefully remove this node from the registry (call before shutdown)."""
+        if self._heartbeat_sender:
+            self._heartbeat_sender.stop()
+        if self._registry_client:
+            try:
+                rank     = self.comm_session.rank
+                hostname = socket.gethostname()
+                self._registry_client.deregister(f"ravnest_rank{rank}_{hostname}")
+                self._registry_client.close()
+            except Exception as exc:
+                print(f"[Registry] Deregister failed (non-fatal): {exc}")
 
     def init_comm_session(self):
         assert self.backend in ['grpc', 'gloo', 'nccl'], 'Backend must be set to one of grpc, gloo or nccl'
