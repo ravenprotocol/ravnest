@@ -381,7 +381,76 @@ def get_memory_reqs(model=None, input_size=None, input_data=None, depth=3):
     
     return peak_usage
 
-def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False):
+def _register_cluster_topology(node_pool, model_name: str, registry_address: str):
+    """
+    Pre-populate the registry with the full cluster topology discovered during
+    cluster formation.  This runs coordinator-side (before nodes start) so the
+    registry has an accurate picture of what nodes will join the network.
+
+    Each node is registered with:
+      - its pipeline role (root / stem / leaf)
+      - forward and backward routing targets
+      - RAM / bandwidth from node_configs.json benchmarks
+      - the model class name it will serve
+      - cluster_id for grouping pipeline stages together
+    """
+    try:
+        from ..registry import RegistryClient, NodeCapability, NodeType, ComputeSubtype, ResourceSpec
+
+        client = RegistryClient(registry_address)
+        registered = 0
+
+        for node in node_pool:
+            # Determine pipeline role from routing targets
+            has_fwd = node.forward_target_host is not None
+            has_bwd = node.backward_target_host is not None
+            if has_fwd and not has_bwd:
+                role = "root"
+            elif not has_fwd and has_bwd:
+                role = "leaf"
+            elif has_fwd and has_bwd:
+                role = "stem"
+            else:
+                role = "unknown"
+
+            cap = NodeCapability(
+                node_id   = f"node_{node.node_id}",
+                node_type = NodeType.PIPELINE_COMPUTE,
+                subtype   = ComputeSubtype.RAVNEST,
+                address   = node.address,
+                resources = ResourceSpec(
+                    ram_mb         = int(node.benchmarks.get("ram", 0)),
+                    bandwidth_mbps = float(node.benchmarks.get("bandwidth", 0.0)),
+                ),
+                models    = [model_name],
+                metadata  = {
+                    "cluster_id":     node.cluster_id,
+                    "pipeline_role":  role,
+                    "forward_target": (
+                        f"{node.forward_target_host}:{node.forward_target_port}"
+                        if node.forward_target_host else None
+                    ),
+                    "backward_target": (
+                        f"{node.backward_target_host}:{node.backward_target_port}"
+                        if node.backward_target_host else None
+                    ),
+                    "status": "pending",   # nodes haven't started yet
+                },
+            )
+            try:
+                client.register(cap)
+                registered += 1
+            except Exception as exc:
+                print(f"[Registry] Failed to pre-register node_{node.node_id}: {exc}")
+
+        client.close()
+        print(f"[Registry] Pre-registered {registered}/{len(node_pool)} nodes with registry at {registry_address}")
+    except Exception as exc:
+        print(f"[Registry] Cluster topology registration failed (non-fatal): {exc}")
+
+
+def clusterize(model=None, example_args=(), example_kwargs={}, pass_data=False,
+               registry_address=None):
     """Takes the complete deep learning model and forms clusters from a pool of compute nodes defined in ``node_data/node_configs.json`` file. Automates the whole process of address sharing across nodes, reduction ring formation and seamlessly stores the results as node metadata json files for each node in ``node_data/nodes/`` folder. These metadata files are later used by ``ravnest.node.Node`` class to load all relevant attributes pertaining to a node.
 
     :param model: The complete Pytorch Model that needs to be split, defaults to None
@@ -557,4 +626,12 @@ def clusterize(model=None,  example_args=(), example_kwargs={}, pass_data=False)
 
         with open('node_data/nodes/node_{}.json'.format(node.node_id), 'w') as fp:
             json.dump(node_meta, fp)
+
+    if registry_address:
+        _register_cluster_topology(
+            node_pool=node_pool,
+            model_name=type(model).__name__,
+            registry_address=registry_address,
+        )
+
     print('\nClusters Formed Successfully!')
