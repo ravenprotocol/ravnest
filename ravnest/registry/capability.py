@@ -10,6 +10,7 @@ class NodeType(str, Enum):
     STANDALONE_COMPUTE = "standalone_compute"   # full-model server: vllm, sglang, ollama, …
     AGENT              = "agent"                # LLM-wrapped agent with tool use
     DATA_SOURCE        = "data_source"          # text corpus, image store, vector/graph DB
+    ORCHESTRATOR       = "orchestrator"         # request router / API gateway (Phase 6)
 
 
 class ComputeSubtype(str, Enum):

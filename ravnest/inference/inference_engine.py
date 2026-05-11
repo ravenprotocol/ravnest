@@ -1,3 +1,4 @@
+import socket
 import torch
 import math
 from .memory_tracker import MemoryTracker
@@ -9,7 +10,8 @@ MAX_NUM_TOKENS = 3000
 
 class InferenceEngine():
 
-    def __init__(self, node, tokenizer, track_mem_usage=True, use_kv_cache=True):
+    def __init__(self, node, tokenizer, track_mem_usage=True, use_kv_cache=True,
+                 registry_address=None):
         self.node = node
         self.tokenizer = tokenizer
         self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
@@ -17,14 +19,14 @@ class InferenceEngine():
         self.comm_session = self.node.comm_session
         self.is_pipelining = False
         self.track_mem_usage = track_mem_usage
-        
+
         self.cache_manager = None
         self.k_caches = None
         self.v_caches = None
         if use_kv_cache:
             self.use_prefill = True
-            self.kv_cache_engine = PagedAttentionEngine(device=self.node.device, 
-                                              dtype=self.comm_session.dtype, 
+            self.kv_cache_engine = PagedAttentionEngine(device=self.node.device,
+                                              dtype=self.comm_session.dtype,
                                               num_shard_layers = self.node.layer_end_idx - self.node.layer_start_idx,
                                               model_config=self.node.model.config,
                                               max_batch_size=4, max_seq_length_during_gen=MAX_NUM_TOKENS,
@@ -34,6 +36,83 @@ class InferenceEngine():
         if self.track_mem_usage:
             self.memory_tracker = MemoryTracker(self.comm_session, self.node.device)
             self.memory_tracker.update_metrics()
+
+        self._registry_client  = None
+        self._heartbeat_sender = None
+        if registry_address:
+            self._register_with_registry(registry_address)
+
+    def _register_with_registry(self, registry_address: str):
+        """
+        Register this inference engine as a PIPELINE_COMPUTE node with
+        inference-specific metadata (mode, tokenizer, layer range, etc.).
+
+        If the underlying Node was already registered (via registry_address
+        passed to Node()), we first deregister that entry and replace it with
+        a richer inference-mode entry so the registry accurately reflects what
+        this node is doing.
+        """
+        try:
+            from ..registry import (
+                RegistryClient, HeartbeatSender,
+                NodeCapability, NodeType, ComputeSubtype, ResourceSpec,
+            )
+            rank     = self.comm_session.rank
+            hostname = socket.gethostname()
+            address  = getattr(self.node, "local_address", None) or f"{hostname}:0"
+            node_id  = f"ravnest_rank{rank}_{hostname}"
+
+            # If Node already registered, deregister it first so we can
+            # replace the entry with richer inference metadata.
+            if getattr(self.node, "_registry_client", None) is not None:
+                try:
+                    self.node._registry_client.deregister(node_id)
+                except Exception:
+                    pass
+
+            cap = NodeCapability(
+                node_id   = node_id,
+                node_type = NodeType.PIPELINE_COMPUTE,
+                subtype   = ComputeSubtype.RAVNEST,
+                address   = address,
+                resources = ResourceSpec.from_system(),
+                models    = [type(self.node.model).__name__],
+                metadata  = {
+                    "rank":              rank,
+                    "world_size":        self.comm_session.world_size,
+                    "node_type":         self.node_type,
+                    "backend":           self.node.backend,
+                    "mode":              "inference",
+                    "layer_start_idx":   self.node.layer_start_idx,
+                    "layer_end_idx":     self.node.layer_end_idx,
+                    "tokenizer":         type(self.tokenizer).__name__,
+                    "use_kv_cache":      self.kv_cache_engine is not None,
+                    "max_num_tokens":    MAX_NUM_TOKENS,
+                },
+            )
+
+            self._registry_client = RegistryClient(registry_address)
+            self._registry_client.register(cap)
+
+            self._heartbeat_sender = HeartbeatSender(self._registry_client, node_id)
+            self._heartbeat_sender.start()
+
+            print(f"[Registry] InferenceEngine registered as {node_id} at {registry_address}")
+        except Exception as exc:
+            print(f"[Registry] InferenceEngine registration failed (non-fatal): {exc}")
+
+    def deregister_from_registry(self):
+        """Gracefully remove this inference node from the registry on shutdown."""
+        if self._heartbeat_sender:
+            self._heartbeat_sender.stop()
+        if self._registry_client:
+            try:
+                rank     = self.comm_session.rank
+                hostname = socket.gethostname()
+                self._registry_client.deregister(f"ravnest_rank{rank}_{hostname}")
+                self._registry_client.close()
+            except Exception as exc:
+                print(f"[Registry] InferenceEngine deregister failed (non-fatal): {exc}")
 
     def get_microbatch_inputs(self, start_id, end_id, input_ids=None, **kwargs):
         microbatch_kwargs = {}
