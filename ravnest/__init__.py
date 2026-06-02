@@ -6,7 +6,7 @@ try:
     from .communication import *
     from .endpoints import *
     from .node_tcp import *
-    from .inference_engine import InferenceEngine
+    from .inference import InferenceEngine
     from .strings import *
     from .trainer import *
     from .utils import *
@@ -57,4 +57,27 @@ from .compute import (
     LoadBasedStrategy,
     RoundRobinStrategy,
     ModelMatchStrategy,
+)
+
+# ── Agent nodes & router ──────────────────────────────────────────────────────
+from .agents import (
+    # data classes
+    AgentRequest,
+    AgentResponse,
+    AgentHealthStatus,
+    AgentCapability,
+    ToolCall,
+    ToolResult,
+    # abstract base
+    AgentBackend,
+    # concrete agents
+    LiteLLMAgent,
+    ResearchAgent,
+    SQLAgent,
+    # router
+    AgentRouter,
+    AgentRoutingStrategy,
+    LoadBasedAgentStrategy,
+    RoundRobinAgentStrategy,
+    AgentTypeStrategy,
 )
