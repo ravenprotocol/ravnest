@@ -81,3 +81,26 @@ from .agents import (
     RoundRobinAgentStrategy,
     AgentTypeStrategy,
 )
+
+# ── Data source nodes & router ────────────────────────────────────────────────
+from .data_sources import (
+    # data classes
+    DataChunk,
+    DataRequest,
+    DataResponse,
+    DataSourceCapability,
+    DataSourceHealthStatus,
+    # abstract base
+    DataSourceBackend,
+    # concrete backends
+    TextSource,
+    ImageSource,
+    VectorDBSource,
+    GraphDBSource,
+    # router
+    DataRouter,
+    DataRoutingStrategy,
+    LoadBasedDataStrategy,
+    RoundRobinDataStrategy,
+    SourceTypeStrategy,
+)
