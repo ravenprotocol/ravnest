@@ -82,6 +82,17 @@ from .agents import (
     AgentTypeStrategy,
 )
 
+# ── Mesh — inter-node communication & pipeline ───────────────────────────────
+from .mesh import (
+    NodeMessage,
+    NodeResponse,
+    PipelineStep,
+    PipelineResult,
+    NodeServer,
+    NodeClient,
+    Pipeline,
+)
+
 # ── Data source nodes & router ────────────────────────────────────────────────
 from .data_sources import (
     # data classes
