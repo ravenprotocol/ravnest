@@ -93,6 +93,14 @@ from .mesh import (
     Pipeline,
 )
 
+# ── Gateway — HTTP orchestration layer ───────────────────────────────────────
+from .gateway import (
+    GatewayRequest,
+    GatewayResponse,
+    Orchestrator,
+    GatewayServer,
+)
+
 # ── Data source nodes & router ────────────────────────────────────────────────
 from .data_sources import (
     # data classes
