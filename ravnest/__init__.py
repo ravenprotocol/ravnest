@@ -101,6 +101,37 @@ from .gateway import (
     GatewayServer,
 )
 
+# ── Security & trust primitives ──────────────────────────────────────────────
+from .security import (
+    # crypto
+    generate_key,
+    generate_token,
+    sign,
+    verify,
+    hash_key,
+    make_timestamp,
+    check_timestamp,
+    sign_message_dict,
+    verify_message_dict,
+    # auth
+    KeyInfo,
+    APIKeyStore,
+    require_api_key,
+    require_hmac,
+    # rate limiting
+    RateLimiter,
+    MultiLimiter,
+    rate_limit,
+    rate_limit_by_api_key,
+    # sandbox
+    ToolSandbox,
+    AgentSandbox,
+    InputValidator,
+    ToolNotAllowed,
+    ToolLimitExceeded,
+    ToolTimeout,
+)
+
 # ── Data source nodes & router ────────────────────────────────────────────────
 from .data_sources import (
     # data classes
