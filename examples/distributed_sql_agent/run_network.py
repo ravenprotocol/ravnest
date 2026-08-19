@@ -2,24 +2,42 @@
 run_network.py — Launch the full distributed SQL agent network and run a demo.
 
 Starts three processes:
-    1. node_compute.py  (Llama via Ollama, port 8765)
-    2. node_sql.py      (SQLite tool node,  port 8766)
-    3. node_agent.py    (ReAct SQL agent,   port 8767)
+    1. node_compute.py  (Llama compute node, port 8765)  ← backend is selectable
+    2. node_sql.py      (SQLite tool node,   port 8766)
+    3. node_agent.py    (ReAct SQL agent,    port 8767)
 
 Waits for all three to be healthy, then sends a demo question and prints
 the answer.  Ctrl-C shuts everything down cleanly.
 
+Backend choices (--backend)
+---------------------------
+  ollama   (default)  OllamaBackend — requires `ollama` daemon + `ollama pull <model>`
+  vllm                VLLMBackend   — requires `pip install vllm` and a GPU
+  ravnest             RavnestBackend via torchrun pipeline parallelism — requires
+                      GPU(s) and `pip install torch transformers`; use
+                      --num-nodes to set the pipeline depth
+
 Prerequisites
 -------------
-    pip install aiohttp httpx ollama
-    ollama pull llama3.2
+    pip install aiohttp
     python3 setup_db.py          # create shop.db
+
+    # Ollama backend (default):
+    pip install ollama
+    ollama pull llama3.2
+
+    # vLLM backend:
+    pip install vllm
+
+    # Ravnest backend:
+    pip install torch transformers
 
 Usage
 -----
     python3 run_network.py
+    python3 run_network.py --backend vllm --model meta-llama/Llama-3.2-3B-Instruct
+    python3 run_network.py --backend ravnest --model meta-llama/Llama-3.2-8B-Instruct --num-nodes 3
     python3 run_network.py --query "Which city has the most customers?"
-    python3 run_network.py --model llama3.1 --query "List all product categories"
     python3 run_network.py --no-demo   # just start the nodes, don't send a query
 """
 
@@ -37,14 +55,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 HERE      = pathlib.Path(__file__).resolve().parent
 DB_PATH   = HERE / "shop.db"
 
-NODES = [
-    {
-        "name":    "compute",
-        "script":  HERE / "node_compute.py",
-        "port":    8765,
-        "health":  "http://localhost:8765/health",
-        "extra":   [],
-    },
+SQL_NODES = [
     {
         "name":   "sql-tool",
         "script": HERE / "node_sql.py",
@@ -61,8 +72,67 @@ NODES = [
     },
 ]
 
+# Compute node config per backend — filled in at runtime
+COMPUTE_NODE_DEFAULTS: dict[str, dict] = {
+    "ollama": {
+        "script": HERE / "node_compute.py",
+        "extra":  [],
+    },
+    "vllm": {
+        "script": HERE / "node_compute_vllm.py",
+        "extra":  [],
+    },
+    "ravnest": {
+        "script": HERE / "node_compute_ravnest.py",
+        "extra":  [],   # torchrun args added dynamically
+    },
+}
+
 
 # ── process management ────────────────────────────────────────────────────────
+
+def start_compute_node(backend: str, model: str, port: int, host: str,
+                       num_nodes: int, ravnest_master_addr: str,
+                       ravnest_master_port: int) -> subprocess.Popen:
+    """Launch the compute node subprocess for the chosen backend."""
+    cfg = COMPUTE_NODE_DEFAULTS[backend]
+
+    if backend == "ravnest":
+        # torchrun handles distributed init; one process per pipeline stage
+        cmd = [
+            "torchrun",
+            f"--nnodes={num_nodes}",
+            "--nproc_per_node=1",
+            "--node_rank=0",
+            f"--master_addr={ravnest_master_addr}",
+            f"--master_port={ravnest_master_port}",
+            str(cfg["script"]),
+            "--port", str(port),
+            "--host", host,
+            "--model", model,
+            "--num-nodes", str(num_nodes),
+            *cfg["extra"],
+        ]
+        print("[run] NOTE: Ravnest backend requires additional torchrun invocations")
+        print(f"[run]   for ranks 1..{num_nodes - 1} on the other machines.")
+        print(f"[run]   See node_compute_ravnest.py docstring for details.")
+    else:
+        cmd = [
+            sys.executable, str(cfg["script"]),
+            "--port", str(port),
+            "--host", host,
+            "--model", model,
+            *cfg["extra"],
+        ]
+
+    return subprocess.Popen(
+        cmd,
+        stdout = subprocess.PIPE,
+        stderr = subprocess.STDOUT,
+        bufsize = 1,
+        text    = True,
+    )
+
 
 def start_node(node: dict, model: str) -> subprocess.Popen:
     cmd = [
@@ -70,17 +140,16 @@ def start_node(node: dict, model: str) -> subprocess.Popen:
         "--port", str(node["port"]),
         *node["extra"],
     ]
-    if node["name"] in ("compute", "agent"):
+    if node["name"] == "agent":
         cmd += ["--model", model]
 
-    proc = subprocess.Popen(
+    return subprocess.Popen(
         cmd,
         stdout = subprocess.PIPE,
         stderr = subprocess.STDOUT,
         bufsize = 1,
         text    = True,
     )
-    return proc
 
 
 def wait_healthy(url: str, name: str, timeout: float = 30.0) -> bool:
@@ -138,12 +207,30 @@ DEMO_QUESTIONS = [
 
 def main():
     p = argparse.ArgumentParser(description="Launch the distributed SQL agent network")
-    p.add_argument("--model",   default="llama3.2")
+    p.add_argument("--model",   default=None,
+                   help="Model name / HF model ID (default depends on --backend)")
+    p.add_argument("--backend", default="ollama",
+                   choices=["ollama", "vllm", "ravnest"],
+                   help="Compute backend for the LLM node")
+    p.add_argument("--num-nodes", default=3, type=int,
+                   help="[ravnest only] Number of pipeline stages")
+    p.add_argument("--ravnest-master-addr", default="localhost",
+                   help="[ravnest only] torchrun master address")
+    p.add_argument("--ravnest-master-port", default=29500, type=int,
+                   help="[ravnest only] torchrun master port")
     p.add_argument("--query",   default=None,
                    help="Ask a custom question after startup (overrides demo questions)")
     p.add_argument("--no-demo", action="store_true",
                    help="Start nodes only — don't send any query")
     args = p.parse_args()
+
+    # Default model per backend
+    if args.model is None:
+        args.model = {
+            "ollama":  "llama3.2",
+            "vllm":    "meta-llama/Llama-3.2-3B-Instruct",
+            "ravnest": "meta-llama/Llama-3.2-8B-Instruct",
+        }[args.backend]
 
     # Pre-flight checks
     if not DB_PATH.exists():
@@ -154,8 +241,9 @@ def main():
     print("=" * 60)
     print(" Ravnest Distributed SQL Agent — network startup")
     print("=" * 60)
-    print(f"  model : {args.model}")
-    print(f"  db    : {DB_PATH}")
+    print(f"  backend : {args.backend}")
+    print(f"  model   : {args.model}")
+    print(f"  db      : {DB_PATH}")
     print()
 
     procs: list[subprocess.Popen] = []
@@ -175,19 +263,42 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    # Start nodes in order
-    for node in NODES:
+    # Start compute node (backend-specific)
+    print(f"[run] Starting compute node (backend={args.backend}, port=8765)…")
+    compute_proc = start_compute_node(
+        backend              = args.backend,
+        model                = args.model,
+        port                 = 8765,
+        host                 = "0.0.0.0",
+        num_nodes            = args.num_nodes,
+        ravnest_master_addr  = args.ravnest_master_addr,
+        ravnest_master_port  = args.ravnest_master_port,
+    )
+    procs.append(compute_proc)
+    time.sleep(0.3)
+
+    # Start SQL tool and agent nodes
+    for node in SQL_NODES:
         print(f"[run] Starting {node['name']} node (port {node['port']})…")
         proc = start_node(node, args.model)
         procs.append(proc)
-        time.sleep(0.3)   # slight stagger so logs are readable
+        time.sleep(0.3)
+
+    all_nodes = [
+        {"name": "compute", "health": "http://localhost:8765/health",
+         "timeout": 120.0 if args.backend in ("vllm", "ravnest") else 30.0},
+        {"name": "sql-tool", "health": "http://localhost:8766/health", "timeout": 30.0},
+        {"name": "agent",    "health": "http://localhost:8767/health", "timeout": 30.0},
+    ]
 
     # Wait for all three to be healthy
     print()
     print("[run] Waiting for nodes to be healthy…")
+    if args.backend in ("vllm", "ravnest"):
+        print("[run]   (model loading may take a minute…)")
     all_healthy = True
-    for node in NODES:
-        ok = wait_healthy(node["health"], node["name"], timeout=60.0)
+    for node in all_nodes:
+        ok = wait_healthy(node["health"], node["name"], timeout=node["timeout"])
         status = "OK" if ok else "FAILED"
         print(f"  {node['name']:10s}  {node['health']}  [{status}]")
         if not ok:
@@ -199,9 +310,9 @@ def main():
 
     print()
     print("[run] Network is up.")
-    print(f"  Compute node : http://localhost:8765")
-    print(f"  SQL tool node: http://localhost:8766")
-    print(f"  Agent node   : http://localhost:8767")
+    print(f"  Compute node ({args.backend}) : http://localhost:8765")
+    print(f"  SQL tool node                : http://localhost:8766")
+    print(f"  Agent node                   : http://localhost:8767")
     print()
 
     if args.no_demo:
