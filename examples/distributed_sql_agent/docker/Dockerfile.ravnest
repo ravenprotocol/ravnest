@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Compute node — Ravnest pipeline-parallel backend (GPU required, torchrun)
+#
+# Build context: repo root (ravnest/)
+#
+#   docker build -t ravnest-compute-pp \
+#       -f examples/distributed_sql_agent/docker/Dockerfile.ravnest .
+#
+# Local single-machine run (3 pipeline stages on 3 GPUs, rank 0):
+#   docker run --gpus '"device=0"' -p 8765:8765 \
+#       -e RANK=0 -e NUM_NODES=3 -e MASTER_ADDR=<host-ip> \
+#       ravnest-compute-pp
+#   # Repeat for RANK=1,2 on other machines/containers (no -p 8765 needed there)
+#
+# In Kubernetes: the Helm chart handles rank assignment via StatefulSet ordinals.
+# See helm/ravnest-sql-agent/templates/deployment-compute.yaml
+#
+# Prerequisites: nvidia-container-toolkit, CUDA 12.1+ driver
+# ─────────────────────────────────────────────────────────────────────────────
+
+# PyTorch official image: Python 3.10 (conda), CUDA 12.1, cuDNN 8
+FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
+
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+
+# gRPC tools for proto compilation (node_tcp.py uses server_pb2)
+# transformers / accelerate for model loading
+RUN pip install --no-cache-dir \
+        grpcio==1.51.3 \
+        grpcio-tools==1.51.3 \
+        transformers \
+        accelerate \
+        aiohttp \
+        httpx \
+        numpy \
+        psutil
+
+COPY ravnest/  ./ravnest/
+COPY examples/ ./examples/
+
+# Compile server.proto and tensor.proto that node_tcp.py imports.
+# setup.py normally handles this; we replicate the essential steps here.
+RUN python3 -m grpc_tools.protoc \
+        --proto_path=ravnest/protos \
+        --python_out=ravnest/protos \
+        --pyi_out=ravnest/protos \
+        --grpc_python_out=ravnest/protos \
+        ravnest/protos/server.proto \
+        ravnest/protos/tensor.proto \
+    && python3 -c "
+import re, glob
+for f in glob.glob('ravnest/protos/*_pb2*.py'):
+    txt = open(f).read()
+    open(f, 'w').write(re.sub(r'\n(import \w+_pb2\w*)', r'\nfrom . \1', txt))
+"
+
+COPY examples/distributed_sql_agent/docker/entrypoint-ravnest.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8765 29500
+
+# Defaults — override in docker compose or K8s Helm chart
+ENV COMPUTE_PORT=8765 \
+    COMPUTE_HOST=0.0.0.0 \
+    COMPUTE_MODEL=meta-llama/Llama-3.2-8B-Instruct \
+    NUM_NODES=3 \
+    MASTER_ADDR=localhost \
+    MASTER_PORT=29500 \
+    RANK=0
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=6 \
+    CMD curl -sf http://localhost:${COMPUTE_PORT}/health || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

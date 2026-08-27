@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Compute node — vLLM backend (GPU required)
+#
+# Build context: repo root (ravnest/)
+#
+#   docker build -t ravnest-compute-vllm \
+#       -f examples/distributed_sql_agent/docker/Dockerfile.vllm .
+#
+# Run:
+#   docker run --gpus all -p 8765:8765 \
+#       -e COMPUTE_MODEL=meta-llama/Llama-3.2-3B-Instruct \
+#       -e HF_TOKEN=<your-token> \
+#       ravnest-compute-vllm
+#
+# Prerequisites: nvidia-container-toolkit, CUDA 12.1+ driver
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1
+WORKDIR /app
+
+# Ubuntu 22.04 ships Python 3.10
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-dev curl \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# vLLM pulls in torch automatically via its deps
+RUN pip3 install --no-cache-dir \
+        vllm \
+        aiohttp \
+        httpx \
+        numpy \
+        psutil
+
+COPY ravnest/  ./ravnest/
+COPY examples/ ./examples/
+
+EXPOSE 8765
+ENV COMPUTE_PORT=8765 \
+    COMPUTE_HOST=0.0.0.0 \
+    COMPUTE_MODEL=meta-llama/Llama-3.2-3B-Instruct \
+    TENSOR_PARALLEL_SIZE=1 \
+    GPU_MEMORY_UTILIZATION=0.90
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=6 \
+    CMD curl -sf http://localhost:${COMPUTE_PORT}/health || exit 1
+
+CMD python3 examples/distributed_sql_agent/node_compute_vllm.py \
+        --port                   ${COMPUTE_PORT} \
+        --host                   ${COMPUTE_HOST} \
+        --model                  ${COMPUTE_MODEL} \
+        --tensor-parallel-size   ${TENSOR_PARALLEL_SIZE} \
+        --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION}
