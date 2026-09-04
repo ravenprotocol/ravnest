@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ravnest-sql-agent.fullname" . }}-db-init
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: db-init
+  annotations:
+    # Re-run the job on every helm upgrade by annotating with release revision
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: db-init
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-init
+          image: "{{ .Values.image.repository }}/ravnest-sql:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3
+            - examples/distributed_sql_agent/setup_db.py
+            - --db
+            - /data/shop.db
+          volumeMounts:
+            - name: db-volume
+              mountPath: /data
+      volumes:
+        - name: db-volume
+          persistentVolumeClaim:
+            claimName: {{ include "ravnest-sql-agent.fullname" . }}-db

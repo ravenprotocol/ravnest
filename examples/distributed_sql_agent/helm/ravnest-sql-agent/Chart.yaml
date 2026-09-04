@@ -1,0 +1,15 @@
+apiVersion: v2
+name: ravnest-sql-agent
+description: Ravnest distributed SQL agent — LLM + SQL tool on separate mesh nodes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ravnest
+  - llm
+  - distributed
+  - sql
+  - agent
+maintainers:
+  - name: Ravnest
+    url: https://github.com/ravenprotocol/ravnest

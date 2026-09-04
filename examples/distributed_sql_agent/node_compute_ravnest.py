@@ -64,6 +64,7 @@ Prerequisites
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import sys
 import time
@@ -102,7 +103,8 @@ def main() -> None:
                    choices=["float16", "bfloat16", "float32"])
     args = p.parse_args()
 
-    local_rank = int(torch.distributed.get_rank()) if torch.distributed.is_initialized() else 0
+    # Read rank from env set by torchrun (LOCAL_RANK) or K8s Helm chart (RANK)
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
     device     = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
     torch_dtype = {
         "float16":  torch.float16,

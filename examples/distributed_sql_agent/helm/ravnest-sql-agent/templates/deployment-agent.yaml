@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ravnest-sql-agent.fullname" . }}-agent
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ravnest-sql-agent.selectorLabels" . | nindent 6 }}
+      component: agent
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: agent
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}/ravnest-agent:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.agent.port }}
+              protocol: TCP
+          env:
+            - name: AGENT_PORT
+              value: "{{ .Values.agent.port }}"
+            - name: AGENT_MODEL
+              value: "{{ include "ravnest-sql-agent.agentModel" . }}"
+            - name: COMPUTE_URL
+              value: "{{ include "ravnest-sql-agent.computeServiceUrl" . }}"
+            - name: SQL_URL
+              value: "{{ include "ravnest-sql-agent.sqlServiceUrl" . }}"
+            - name: DB_PATH
+              value: /data/shop.db
+          volumeMounts:
+            - name: db-volume
+              mountPath: /data
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          {{- with .Values.agent.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: db-volume
+          persistentVolumeClaim:
+            claimName: {{ include "ravnest-sql-agent.fullname" . }}-db

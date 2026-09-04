@@ -1,0 +1,137 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Ravnest SQL Agent — Helm values
+#
+# Quick-start examples:
+#
+#   # Ollama backend (default)
+#   helm install my-agent ./helm/ravnest-sql-agent
+#
+#   # vLLM backend
+#   helm install my-agent ./helm/ravnest-sql-agent \
+#       --set compute.backend=vllm \
+#       --set compute.vllm.model=meta-llama/Llama-3.2-3B-Instruct \
+#       --set compute.vllm.hfToken=hf_xxx
+#
+#   # Ravnest pipeline-parallel backend (3 GPU nodes)
+#   helm install my-agent ./helm/ravnest-sql-agent \
+#       --set compute.backend=ravnest \
+#       --set compute.ravnest.numNodes=3 \
+#       --set compute.ravnest.model=meta-llama/Llama-3.2-8B-Instruct
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Container images ──────────────────────────────────────────────────────────
+image:
+  # Base repository prefix — set to your registry, e.g. ghcr.io/myorg
+  repository: ravnest
+  pullPolicy: IfNotPresent
+  tag: latest
+  # Images expected per backend:
+  #   ravnest/ravnest-compute:latest        (Ollama backend)
+  #   ravnest/ravnest-compute-vllm:latest   (vLLM backend)
+  #   ravnest/ravnest-compute-pp:latest     (Ravnest pipeline backend)
+  #   ravnest/ravnest-sql:latest
+  #   ravnest/ravnest-agent:latest
+
+imagePullSecrets: []
+
+# ── Compute node ──────────────────────────────────────────────────────────────
+compute:
+  # Backend for the LLM compute node.
+  # Choices: ollama | vllm | ravnest
+  backend: ollama
+
+  port: 8765
+
+  # ── Ollama backend ─────────────────────────────────────────────────────────
+  ollama:
+    model: llama3.2
+    # If empty, an in-cluster Ollama service is deployed (see ollama section).
+    # Set to an external URL to skip the in-cluster deployment.
+    serviceUrl: ""
+
+  # ── vLLM backend ───────────────────────────────────────────────────────────
+  vllm:
+    model: meta-llama/Llama-3.2-3B-Instruct
+    tensorParallelSize: 1
+    gpuMemoryUtilization: "0.90"
+    hfToken: ""
+    nodeSelector: {}
+    tolerations: []
+    resources:
+      requests:
+        nvidia.com/gpu: "1"
+      limits:
+        nvidia.com/gpu: "1"
+    # Seconds to wait before first readiness probe (model weight loading)
+    startupProbeInitialDelay: 120
+
+  # ── Ravnest pipeline-parallel backend ─────────────────────────────────────
+  ravnest:
+    model: meta-llama/Llama-3.2-8B-Instruct
+    # Number of pipeline stages = number of StatefulSet replicas
+    numNodes: 3
+    masterPort: 29500
+    hfToken: ""
+    nodeSelector: {}
+    tolerations: []
+    resources:
+      requests:
+        nvidia.com/gpu: "1"
+      limits:
+        nvidia.com/gpu: "1"
+    startupProbeInitialDelay: 180
+
+# ── SQL tool node ─────────────────────────────────────────────────────────────
+sql:
+  port: 8766
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+
+# ── Agent node ────────────────────────────────────────────────────────────────
+agent:
+  port: 8767
+  # Model name forwarded to the agent's system prompt (cosmetic).
+  # Leave empty to inherit from compute.ollama.model / compute.vllm.model etc.
+  model: ""
+  maxSteps: 6
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+
+  # Expose the agent outside the cluster
+  service:
+    type: ClusterIP     # ClusterIP | NodePort | LoadBalancer
+    nodePort: ""        # only used when type=NodePort
+
+# ── In-cluster Ollama ─────────────────────────────────────────────────────────
+# Only deployed when compute.backend=ollama and compute.ollama.serviceUrl is empty.
+ollama:
+  image: ollama/ollama:latest
+  port: 11434
+  # Model to pull on startup (should match compute.ollama.model)
+  model: llama3.2
+  resources: {}
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 20Gi
+
+# ── Database (SQLite) ─────────────────────────────────────────────────────────
+database:
+  # PVC used by the SQL tool node and the agent (schema read at startup)
+  storageClass: ""   # "" = cluster default
+  storageSize: 1Gi
+  accessMode: ReadWriteOnce  # use ReadWriteMany (NFS) for multi-node deployments
+
+# ── Global ────────────────────────────────────────────────────────────────────
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+serviceAccount:
+  create: false
+  name: ""

@@ -1,0 +1,70 @@
+{{- $fullname := include "ravnest-sql-agent.fullname" . -}}
+{{- $backend  := .Values.compute.backend -}}
+
+# ClusterIP service: agent → compute HTTP
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-compute
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: compute
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ravnest-sql-agent.selectorLabels" . | nindent 4 }}
+    component: compute
+  ports:
+    - name: http
+      port: {{ .Values.compute.port }}
+      targetPort: http
+      protocol: TCP
+
+{{- if eq $backend "ravnest" }}
+---
+# Headless service: NCCL peer-to-peer communication between StatefulSet pods
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-compute-headless
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: compute
+    headless: "true"
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ravnest-sql-agent.selectorLabels" . | nindent 4 }}
+    component: compute
+  ports:
+    - name: http
+      port: {{ .Values.compute.port }}
+      targetPort: http
+      protocol: TCP
+    - name: nccl
+      port: {{ .Values.compute.ravnest.masterPort }}
+      targetPort: nccl
+      protocol: TCP
+{{- end }}
+
+{{- if and (eq $backend "ollama") (not .Values.compute.ollama.serviceUrl) }}
+---
+# In-cluster Ollama service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-ollama
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: ollama
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ravnest-sql-agent.selectorLabels" . | nindent 4 }}
+    component: ollama
+  ports:
+    - name: http
+      port: {{ .Values.ollama.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

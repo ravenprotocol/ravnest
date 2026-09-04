@@ -1,0 +1,21 @@
+{{- $svc := .Values.agent.service -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ravnest-sql-agent.fullname" . }}-agent
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: agent
+spec:
+  type: {{ $svc.type | default "ClusterIP" }}
+  selector:
+    {{- include "ravnest-sql-agent.selectorLabels" . | nindent 4 }}
+    component: agent
+  ports:
+    - name: http
+      port: {{ .Values.agent.port }}
+      targetPort: http
+      protocol: TCP
+      {{- if and (eq ($svc.type | default "ClusterIP") "NodePort") $svc.nodePort }}
+      nodePort: {{ $svc.nodePort }}
+      {{- end }}

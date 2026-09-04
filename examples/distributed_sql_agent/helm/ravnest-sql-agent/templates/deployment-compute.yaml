@@ -1,0 +1,291 @@
+{{- $fullname := include "ravnest-sql-agent.fullname" . -}}
+{{- $backend  := .Values.compute.backend -}}
+{{- /*
+  Ravnest backend → StatefulSet (pipeline stages need stable hostnames for NCCL).
+  Ollama / vLLM  → Deployment (stateless, single replica).
+*/ -}}
+
+{{- if eq $backend "ravnest" }}
+# ── StatefulSet: Ravnest pipeline-parallel compute ─────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-compute
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: compute
+    backend: ravnest
+spec:
+  serviceName: {{ $fullname }}-compute-headless
+  replicas: {{ .Values.compute.ravnest.numNodes }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "ravnest-sql-agent.selectorLabels" . | nindent 6 }}
+      component: compute
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: compute
+        backend: ravnest
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.compute.ravnest.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.compute.ravnest.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: compute
+          image: "{{ .Values.image.repository }}/ravnest-compute-pp:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.compute.port }}
+              protocol: TCP
+            - name: nccl
+              containerPort: {{ .Values.compute.ravnest.masterPort }}
+              protocol: TCP
+          env:
+            # Downward API: inject pod name so entrypoint can extract ordinal → RANK
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NUM_NODES
+              value: "{{ .Values.compute.ravnest.numNodes }}"
+            - name: MASTER_ADDR
+              value: "{{ include "ravnest-sql-agent.ravnestMasterAddr" . }}"
+            - name: MASTER_PORT
+              value: "{{ .Values.compute.ravnest.masterPort }}"
+            - name: COMPUTE_MODEL
+              value: "{{ .Values.compute.ravnest.model }}"
+            - name: COMPUTE_PORT
+              value: "{{ .Values.compute.port }}"
+            - name: COMPUTE_HOST
+              value: "0.0.0.0"
+            {{- if .Values.compute.ravnest.hfToken }}
+            - name: HF_TOKEN
+              value: "{{ .Values.compute.ravnest.hfToken }}"
+            {{- end }}
+          resources:
+            {{- toYaml .Values.compute.ravnest.resources | nindent 12 }}
+          # Readiness: HTTP — only ROOT (ordinal 0) passes; STEM/LEAF remain
+          # "not ready" so the ClusterIP service routes HTTP only to ROOT.
+          # Liveness: process-level — all pods pass so STEM/LEAF are never
+          # restarted just because they lack an HTTP server.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.compute.ravnest.startupProbeInitialDelay }}
+            periodSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            exec:
+              command: ["cat", "/proc/1/status"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+
+{{- else }}
+# ── Deployment: Ollama or vLLM compute ────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-compute
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: compute
+    backend: {{ $backend }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ravnest-sql-agent.selectorLabels" . | nindent 6 }}
+      component: compute
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: compute
+        backend: {{ $backend }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq $backend "vllm" }}
+      {{- with .Values.compute.vllm.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.compute.vllm.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: compute
+          {{- if eq $backend "vllm" }}
+          image: "{{ .Values.image.repository }}/ravnest-compute-vllm:{{ .Values.image.tag }}"
+          {{- else }}
+          image: "{{ .Values.image.repository }}/ravnest-compute:{{ .Values.image.tag }}"
+          {{- end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.compute.port }}
+              protocol: TCP
+          env:
+            - name: COMPUTE_PORT
+              value: "{{ .Values.compute.port }}"
+            - name: COMPUTE_HOST
+              value: "0.0.0.0"
+            {{- if eq $backend "vllm" }}
+            - name: COMPUTE_MODEL
+              value: "{{ .Values.compute.vllm.model }}"
+            - name: TENSOR_PARALLEL_SIZE
+              value: "{{ .Values.compute.vllm.tensorParallelSize }}"
+            - name: GPU_MEMORY_UTILIZATION
+              value: "{{ .Values.compute.vllm.gpuMemoryUtilization }}"
+            {{- if .Values.compute.vllm.hfToken }}
+            - name: HF_TOKEN
+              value: "{{ .Values.compute.vllm.hfToken }}"
+            {{- end }}
+            {{- else }}
+            - name: COMPUTE_MODEL
+              value: "{{ .Values.compute.ollama.model }}"
+            - name: OLLAMA_BASE_URL
+              value: "{{ include "ravnest-sql-agent.ollamaUrl" . }}"
+            {{- end }}
+          {{- if eq $backend "vllm" }}
+          resources:
+            {{- toYaml .Values.compute.vllm.resources | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            {{- if eq $backend "vllm" }}
+            initialDelaySeconds: {{ .Values.compute.vllm.startupProbeInitialDelay }}
+            periodSeconds: 15
+            failureThreshold: 10
+            {{- else }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            {{- if eq $backend "vllm" }}
+            initialDelaySeconds: {{ add .Values.compute.vllm.startupProbeInitialDelay 60 }}
+            {{- else }}
+            initialDelaySeconds: 30
+            {{- end }}
+            periodSeconds: 30
+{{- end }}
+
+{{- /* ── In-cluster Ollama Deployment ─────────────────────────────────── */ -}}
+{{- if and (eq $backend "ollama") (not .Values.compute.ollama.serviceUrl) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-ollama
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ravnest-sql-agent.selectorLabels" . | nindent 6 }}
+      component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: ollama
+    spec:
+      initContainers:
+        # Pull model into the Ollama data volume before the main container starts
+        - name: pull-model
+          image: {{ .Values.ollama.image }}
+          command:
+            - sh
+            - -c
+            - |
+              ollama serve &
+              sleep 5
+              ollama pull {{ .Values.ollama.model }}
+              kill %1
+          env:
+            - name: OLLAMA_MODELS
+              value: /models
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /models
+      containers:
+        - name: ollama
+          image: {{ .Values.ollama.image }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ollama.port }}
+          env:
+            - name: OLLAMA_MODELS
+              value: /models
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /models
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.ollama.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: ollama-models
+          {{- if .Values.ollama.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-ollama-models
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.ollama.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-ollama-models
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: ollama
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.ollama.persistence.storageClass }}
+  storageClassName: {{ .Values.ollama.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.ollama.persistence.size }}
+{{- end }}
+{{- end }}

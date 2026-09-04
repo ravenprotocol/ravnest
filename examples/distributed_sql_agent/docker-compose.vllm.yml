@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Ravnest Distributed SQL Agent — vLLM backend (GPU required)
+#
+# Runs the LLM in-process via vLLM instead of Ollama. No external daemon needed.
+# Supports tensor parallelism across multiple GPUs on one machine.
+#
+# Usage (from examples/distributed_sql_agent/):
+#   # Single GPU, default model
+#   docker compose -f docker-compose.vllm.yml up --build
+#
+#   # Two GPUs, custom model
+#   MODEL=meta-llama/Llama-3.2-8B-Instruct GPU_COUNT=2 \
+#       docker compose -f docker-compose.vllm.yml up --build
+#
+# Environment variables:
+#   MODEL                  HuggingFace model ID  (default: meta-llama/Llama-3.2-3B-Instruct)
+#   GPU_COUNT              Number of GPUs for tensor parallelism (default: 1)
+#   GPU_MEMORY_UTILIZATION Fraction of VRAM for vLLM (default: 0.90)
+#   HF_TOKEN               HuggingFace token for gated models
+#
+# Prerequisites:
+#   - NVIDIA GPU + driver ≥ 520
+#   - nvidia-container-toolkit  (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+#   - docker compose v2
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-build-cpu: &build-cpu
+  context: ../..
+  dockerfile: examples/distributed_sql_agent/docker/Dockerfile
+
+services:
+
+  # ── Database init ──────────────────────────────────────────────────────────
+  db-init:
+    build:
+      <<: *build-cpu
+      target: sql
+    restart: "no"
+    command:
+      - python3
+      - examples/distributed_sql_agent/setup_db.py
+      - --db
+      - /data/shop.db
+    volumes:
+      - db-data:/data
+
+  # ── Compute node (in-process vLLM, GPU) ───────────────────────────────────
+  compute:
+    build:
+      context: ../..
+      dockerfile: examples/distributed_sql_agent/docker/Dockerfile.vllm
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      COMPUTE_MODEL: ${MODEL:-meta-llama/Llama-3.2-3B-Instruct}
+      TENSOR_PARALLEL_SIZE: ${GPU_COUNT:-1}
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.90}
+      HF_TOKEN: ${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT:-1}
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s     # vLLM loads model weights; allow extra time
+
+  # ── SQL tool node ──────────────────────────────────────────────────────────
+  sql:
+    build:
+      <<: *build-cpu
+      target: sql
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    volumes:
+      - db-data:/data
+    environment:
+      DB_PATH: /data/shop.db
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8766/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Agent node ─────────────────────────────────────────────────────────────
+  agent:
+    build:
+      <<: *build-cpu
+      target: agent
+    restart: unless-stopped
+    ports:
+      - "8767:8767"
+    volumes:
+      - db-data:/data
+    environment:
+      AGENT_MODEL: ${MODEL:-meta-llama/Llama-3.2-3B-Instruct}
+      COMPUTE_URL: http://compute:8765
+      SQL_URL: http://sql:8766
+      DB_PATH: /data/shop.db
+    depends_on:
+      compute:
+        condition: service_healthy
+      sql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8767/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  db-data:

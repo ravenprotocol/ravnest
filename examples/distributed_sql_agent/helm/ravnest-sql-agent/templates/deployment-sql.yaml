@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ravnest-sql-agent.fullname" . }}-sql
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: sql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ravnest-sql-agent.selectorLabels" . | nindent 6 }}
+      component: sql
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: sql
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sql.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sql.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: sql
+          image: "{{ .Values.image.repository }}/ravnest-sql:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.sql.port }}
+              protocol: TCP
+          env:
+            - name: SQL_PORT
+              value: "{{ .Values.sql.port }}"
+            - name: DB_PATH
+              value: /data/shop.db
+          volumeMounts:
+            - name: db-volume
+              mountPath: /data
+              readOnly: false
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          {{- with .Values.sql.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: db-volume
+          persistentVolumeClaim:
+            claimName: {{ include "ravnest-sql-agent.fullname" . }}-db

@@ -1,0 +1,138 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Ravnest Distributed SQL Agent — Ollama backend
+#
+# Starts: Ollama model server, DB init job, compute, SQL, and agent nodes.
+#
+# Usage (from examples/distributed_sql_agent/):
+#   docker compose up --build            # full stack
+#   docker compose up --build --scale compute=1
+#   docker compose down -v               # tear down + remove volumes
+#
+# Environment variables (set in shell or a .env file):
+#   MODEL=llama3.2          Ollama model name
+#   OLLAMA_IMAGE=ollama/ollama:latest
+#
+# For vLLM backend: see docker-compose.vllm.yml
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-build-cpu: &build-cpu
+  context: ../..
+  dockerfile: examples/distributed_sql_agent/docker/Dockerfile
+
+services:
+
+  # ── Ollama model server ────────────────────────────────────────────────────
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # Pull the model into the running Ollama server before compute starts.
+  # OLLAMA_HOST tells the CLI to talk to the container's server.
+  ollama-init:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "${MODEL:-llama3.2}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # ── Database init ──────────────────────────────────────────────────────────
+  db-init:
+    build:
+      <<: *build-cpu
+      target: sql
+    restart: "no"
+    command:
+      - python3
+      - examples/distributed_sql_agent/setup_db.py
+      - --db
+      - /data/shop.db
+    volumes:
+      - db-data:/data
+
+  # ── Compute node (Llama via Ollama) ───────────────────────────────────────
+  compute:
+    build:
+      <<: *build-cpu
+      target: compute
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      COMPUTE_MODEL: ${MODEL:-llama3.2}
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8765/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ── SQL tool node ──────────────────────────────────────────────────────────
+  sql:
+    build:
+      <<: *build-cpu
+      target: sql
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    volumes:
+      - db-data:/data
+    environment:
+      DB_PATH: /data/shop.db
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8766/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Agent node ─────────────────────────────────────────────────────────────
+  agent:
+    build:
+      <<: *build-cpu
+      target: agent
+    restart: unless-stopped
+    ports:
+      - "8767:8767"
+    volumes:
+      - db-data:/data
+    environment:
+      AGENT_MODEL: ${MODEL:-llama3.2}
+      COMPUTE_URL: http://compute:8765
+      SQL_URL: http://sql:8766
+      DB_PATH: /data/shop.db
+    depends_on:
+      compute:
+        condition: service_healthy
+      sql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8767/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  ollama-data:
+  db-data:
