@@ -73,6 +73,7 @@ class NodeServer:
         self._compute_backends:      List[Any] = []
         self._agent_backends:        List[Any] = []
         self._data_source_backends:  List[Any] = []
+        self._federated_backends:    List[Any] = []
 
         self._registry_address: Optional[str] = None
 
@@ -94,6 +95,12 @@ class NodeServer:
         """Register a DataSourceBackend with this server."""
         self._data_source_backends.append(backend)
         logger.info("Registered data source: %s", type(backend).__name__)
+        return self
+
+    def add_federated(self, backend) -> "NodeServer":
+        """Register a FederatedBackend (FL coordinator) with this server."""
+        self._federated_backends.append(backend)
+        logger.info("Registered federated backend: %s", type(backend).__name__)
         return self
 
     # ── run ──────────────────────────────────────────────────────────────
@@ -168,6 +175,7 @@ class NodeServer:
                 "compute":     len(self._compute_backends),
                 "agent":       len(self._agent_backends),
                 "data_source": len(self._data_source_backends),
+                "federated":   len(self._federated_backends),
             },
         })
 
@@ -188,6 +196,11 @@ class NodeServer:
             hs = await b.ahealth()
             cap = b.capabilities()
             results[cap.node_id] = {"type": "data_source", "healthy": hs.healthy,
+                                     "message": hs.message}
+        for b in self._federated_backends:
+            hs = await b.ahealth()
+            cap = b.capabilities()
+            results[cap.node_id] = {"type": "federated", "healthy": hs.healthy,
                                      "message": hs.message}
         all_ok = all(v["healthy"] for v in results.values()) if results else True
         return web.json_response({"ok": all_ok, "backends": results})
@@ -210,6 +223,10 @@ class NodeServer:
                           "source_type": c.source_type,
                           "modalities": c.modalities,
                           "item_count": c.item_count})
+        for b in self._federated_backends:
+            c = b.capabilities()
+            caps.append({"type": "federated", "node_id": c.node_id,
+                          "role": c.role, "config": c.config})
         return web.json_response({"node_id": self._node_id, "capabilities": caps})
 
     async def _handle_message(self, request) -> "web.Response":
@@ -240,6 +257,8 @@ class NodeServer:
                 return await self._dispatch_agent(msg)
             elif msg.node_type == "data_source":
                 return await self._dispatch_data_source(msg)
+            elif msg.node_type == "federated":
+                return await self._dispatch_federated(msg)
             else:
                 return NodeResponse.error_response(
                     f"Unknown node_type: {msg.node_type}",
@@ -414,6 +433,58 @@ class NodeServer:
 
         return NodeResponse.error_response(
             f"Unknown data_source action: {action}", message_id=msg.message_id)
+
+    async def _dispatch_federated(self, msg: NodeMessage) -> NodeResponse:
+        backend = self._pick_backend(
+            self._federated_backends, msg.node_id, None, None,
+        )
+        if backend is None:
+            return NodeResponse.error_response(
+                "No federated backend available", message_id=msg.message_id)
+
+        action = msg.action or "status"
+
+        if action == "upload":
+            from ravnest.federated.base import GradientUpdate
+            try:
+                update = GradientUpdate.from_dict(msg.payload)
+            except Exception as exc:
+                return NodeResponse.error_response(
+                    f"Invalid GradientUpdate: {exc}", message_id=msg.message_id)
+            result = await backend.aupload(update)
+            return NodeResponse(ok=result.get("ok", True), result=result,
+                                message_id=msg.message_id, trace_id=msg.trace_id)
+
+        if action == "download":
+            round_num = (msg.payload or {}).get("round", -1)
+            result = await backend.adownload(round_num)
+            return NodeResponse(ok=result.get("ok", True), result=result,
+                                message_id=msg.message_id, trace_id=msg.trace_id)
+
+        if action == "status":
+            result = await backend.astatus()
+            return NodeResponse(ok=result.get("ok", True), result=result,
+                                message_id=msg.message_id, trace_id=msg.trace_id)
+
+        if action == "wait":
+            p = msg.payload or {}
+            round_num = p.get("round", -1)
+            timeout   = p.get("timeout", 300.0)
+            result = await backend.await_for_round(round_num, timeout)
+            return NodeResponse(ok=result.get("ok", True), result=result,
+                                message_id=msg.message_id, trace_id=msg.trace_id)
+
+        if action == "health":
+            hs = await backend.ahealth()
+            return NodeResponse(
+                ok=True,
+                result={"healthy": hs.healthy, "role": hs.role,
+                        "current_round": hs.current_round, "message": hs.message},
+                message_id=msg.message_id, trace_id=msg.trace_id,
+            )
+
+        return NodeResponse.error_response(
+            f"Unknown federated action: {action}", message_id=msg.message_id)
 
     # ── helpers ───────────────────────────────────────────────────────────
 
