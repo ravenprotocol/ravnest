@@ -47,6 +47,7 @@ from .aggregator import (
     TrimmedMeanAggregator,
 )
 from .coordinator import FLCoordinator
+from .async_coordinator import AsyncFLCoordinator
 from .participant import FLParticipant
 from .privacy import (
     PrivacyAccountant,
@@ -79,6 +80,7 @@ __all__ = [
     "TrimmedMeanAggregator",
     # core classes
     "FLCoordinator",
+    "AsyncFLCoordinator",
     "FLParticipant",
     # privacy
     "PrivacyAccountant",

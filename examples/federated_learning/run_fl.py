@@ -49,6 +49,14 @@ def start_coordinator(args) -> subprocess.Popen:
             "--dp-noise-multiplier", str(args.dp_noise_multiplier),
             "--dp-delta",            str(args.dp_delta),
         ]
+    if args.async_mode:
+        cmd += [
+            "--async-mode",
+            "--round-timeout",           str(args.round_timeout),
+            "--min-updates-for-advance", str(args.min_updates_for_advance),
+            "--staleness-bound",         str(args.staleness_bound),
+            "--staleness-discount",      str(args.staleness_discount),
+        ]
     if args.save_path:
         cmd += ["--save-path", args.save_path]
 
@@ -117,6 +125,12 @@ def main():
     parser.add_argument("--dp-noise-multiplier",   type=float, default=1.1)
     parser.add_argument("--dp-delta",              type=float, default=1e-5)
     parser.add_argument("--no-upload-dp",      action="store_true")
+    # Async FL
+    parser.add_argument("--async-mode",            action="store_true")
+    parser.add_argument("--round-timeout",         type=float, default=60.0)
+    parser.add_argument("--min-updates-for-advance", type=int, default=1)
+    parser.add_argument("--staleness-bound",       type=int, default=0)
+    parser.add_argument("--staleness-discount",    type=float, default=1.0)
     # Misc
     parser.add_argument("--save-path",         default=None)
     args = parser.parse_args()

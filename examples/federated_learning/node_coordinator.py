@@ -79,10 +79,21 @@ def main():
     # Registry
     parser.add_argument("--registry",          default=None,
                         help="Ravnest registry address, e.g. localhost:50099")
+    # Async FL
+    parser.add_argument("--async-mode",            action="store_true",
+                        help="Use AsyncFLCoordinator (timer-based round advancement)")
+    parser.add_argument("--round-timeout",         type=float, default=60.0,
+                        help="Seconds before timer advances round (async mode)")
+    parser.add_argument("--min-updates-for-advance", type=int, default=1,
+                        help="Min updates before timer will aggregate (async mode)")
+    parser.add_argument("--staleness-bound",       type=int, default=0,
+                        help="Accept updates up to N rounds stale (0 = off)")
+    parser.add_argument("--staleness-discount",    type=float, default=1.0,
+                        help="Per-round weight decay for stale updates (0–1)")
     args = parser.parse_args()
 
     from ravnest.federated import (
-        FLConfig, DPConfig, FLCoordinator,
+        FLConfig, DPConfig, FLCoordinator, AsyncFLCoordinator,
         FedAvgAggregator, FedProxAggregator, TrimmedMeanAggregator,
     )
     from ravnest.mesh.node_server import NodeServer
@@ -119,12 +130,26 @@ def main():
     logger.info("Global model: arch=%s  params=%d",
                 args.arch, sum(p.numel() for p in model.parameters()))
 
-    coordinator = FLCoordinator(
-        model      = model,
-        config     = config,
-        aggregator = aggregator,
-        node_id    = args.node_id,
-    )
+    if args.async_mode:
+        coordinator = AsyncFLCoordinator(
+            model                   = model,
+            config                  = config,
+            aggregator              = aggregator,
+            node_id                 = args.node_id,
+            round_timeout           = args.round_timeout,
+            min_updates_for_advance = args.min_updates_for_advance,
+            staleness_bound         = args.staleness_bound,
+            staleness_discount      = args.staleness_discount,
+        )
+        logger.info("Async mode: timeout=%.1fs min_advance=%d staleness=%d",
+                    args.round_timeout, args.min_updates_for_advance, args.staleness_bound)
+    else:
+        coordinator = FLCoordinator(
+            model      = model,
+            config     = config,
+            aggregator = aggregator,
+            node_id    = args.node_id,
+        )
 
     server = NodeServer(host=args.host, port=args.port, node_id=args.node_id)
     server.add_federated(coordinator)
