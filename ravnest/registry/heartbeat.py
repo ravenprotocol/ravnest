@@ -43,12 +43,16 @@ class HeartbeatSender:
         registry_client: A RegistryClient connected to the registry.
         node_id:         ID of the node sending heartbeats.
         interval:        Seconds between heartbeats (default 10 s).
+        cap:             NodeCapability used to re-register automatically if
+                         the registry rejects the heartbeat (e.g. after a TTL
+                         eviction).  Pass None to disable auto-reregistration.
     """
 
-    def __init__(self, registry_client, node_id: str, interval: float = 10.0):
+    def __init__(self, registry_client, node_id: str, interval: float = 10.0, cap=None):
         self._client   = registry_client
         self._node_id  = node_id
         self._interval = interval
+        self._cap      = cap   # NodeCapability for re-registration
         self._stop     = threading.Event()
         self._thread: threading.Thread = None
 
@@ -70,9 +74,20 @@ class HeartbeatSender:
                 load = _sample_load()
                 ok   = self._client.heartbeat(self._node_id, load)
                 if not ok:
-                    logger.warning(
-                        "Heartbeat rejected by registry for %s — node may not be registered",
-                        self._node_id,
-                    )
+                    if self._cap is not None:
+                        logger.info(
+                            "Heartbeat rejected for %s — attempting re-registration",
+                            self._node_id,
+                        )
+                        try:
+                            self._client.register(self._cap)
+                        except Exception as re_exc:
+                            logger.warning("Re-registration failed for %s: %s",
+                                           self._node_id, re_exc)
+                    else:
+                        logger.warning(
+                            "Heartbeat rejected by registry for %s — node may not be registered",
+                            self._node_id,
+                        )
             except Exception as exc:
                 logger.warning("Heartbeat send failed for %s: %s", self._node_id, exc)

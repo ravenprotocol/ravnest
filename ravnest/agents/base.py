@@ -273,6 +273,7 @@ class AgentBackend(ABC):
         )
         client = RegistryClient(registry_address)
         client.register(node)
+        self._registry_client  = client
         self._heartbeat_sender = HeartbeatSender(client, cap.node_id)
         self._heartbeat_sender.start()
 

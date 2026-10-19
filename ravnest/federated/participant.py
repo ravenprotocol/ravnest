@@ -310,6 +310,51 @@ class FLParticipant:
         """Sync wrapper for ``astatus``."""
         return _run_sync(self.astatus())
 
+    # ── registry factory ─────────────────────────────────────────────────
+
+    @classmethod
+    def from_registry(
+        cls,
+        registry_address: str,
+        node_id:          Optional[str] = None,
+        coordinator_id:   Optional[str] = None,
+        dp_config:        Optional[DPConfig] = None,
+        timeout:          float = 120.0,
+    ) -> "FLParticipant":
+        """
+        Discover the FL coordinator via the Ravnest registry and return a
+        ready-to-use FLParticipant.
+
+        Parameters
+        ----------
+        registry_address: gRPC address of the registry (e.g. "localhost:50099").
+        node_id:          This participant's ID (auto-generated if None).
+        coordinator_id:   Registry node_id of the specific coordinator to use.
+                          If None, picks the first registered federated coordinator.
+        dp_config:        Optional DP configuration.
+        timeout:          Per-request HTTP timeout in seconds.
+
+        Raises
+        ------
+        RuntimeError
+            If no federated coordinator is found in the registry.
+        """
+        from ..mesh.node_client import NodeClient
+
+        client = NodeClient.from_registry(
+            registry_address = registry_address,
+            node_type        = "federated",
+            node_id          = coordinator_id,
+            subtype          = "coordinator",
+            timeout          = timeout,
+        )
+        return cls(
+            coordinator_url = client._base_url,
+            node_id         = node_id,
+            dp_config       = dp_config,
+            timeout         = timeout,
+        )
+
     # ── helpers ───────────────────────────────────────────────────────────
 
     @property

@@ -564,5 +564,21 @@ class NodeServer:
                 client.register(nc)
                 logger.info("Registered data source %s with registry", cap.node_id)
 
+            for b in self._federated_backends:
+                cap = b.capabilities()
+                nc  = NodeCapability(
+                    node_id   = cap.node_id,
+                    node_type = NodeType.FEDERATED,
+                    subtype   = cap.role,
+                    address   = address,
+                    metadata  = {
+                        "mesh_address": f"http://{address}",
+                        "role":         cap.role,
+                        **(cap.config or {}),
+                    },
+                )
+                client.register(nc)
+                logger.info("Registered federated backend %s with registry", cap.node_id)
+
         except Exception as exc:
             logger.warning("Failed to register with registry: %s", exc)

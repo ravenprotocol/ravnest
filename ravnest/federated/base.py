@@ -204,3 +204,61 @@ class FederatedBackend(ABC):
     @abstractmethod
     def capabilities(self) -> FederatedCapability:
         """Return capability descriptor for this node."""
+
+    # ── registry helpers ──────────────────────────────────────────────────
+
+    def register_with_registry(
+        self,
+        registry_address:   str,
+        mesh_address:       str  = "",
+        heartbeat_interval: float = 10.0,
+    ) -> None:
+        """
+        Register this federated backend with the Ravnest node registry
+        and start sending heartbeats.
+
+        Parameters
+        ----------
+        registry_address:   Host:port of the gRPC registry server.
+        mesh_address:       Public HTTP URL of this node's NodeServer
+                            (e.g. "http://coordinator:8768").
+                            Stored in metadata so participants can discover
+                            the coordinator via NodeClient.from_registry().
+        heartbeat_interval: Seconds between heartbeat calls.
+        """
+        from ravnest.registry import RegistryClient, HeartbeatSender
+        from ravnest.registry.capability import NodeCapability, NodeType
+
+        cap  = self.capabilities()
+        node = NodeCapability(
+            node_id   = cap.node_id,
+            node_type = NodeType.FEDERATED,
+            subtype   = cap.role,          # "coordinator" | "participant"
+            address   = mesh_address.replace("http://", "").replace("https://", ""),
+            metadata  = {
+                "mesh_address": mesh_address,
+                "role":         cap.role,
+                **(cap.config or {}),
+            },
+        )
+        self._registry_client  = RegistryClient(registry_address, cache_ttl=30.0)
+        self._registry_client.register(node)
+        self._heartbeat_sender = HeartbeatSender(
+            self._registry_client, cap.node_id,
+            interval=heartbeat_interval, cap=node,
+        )
+        self._heartbeat_sender.start()
+
+    def deregister_from_registry(self) -> None:
+        """Gracefully remove this backend from the registry."""
+        sender = getattr(self, "_heartbeat_sender", None)
+        if sender:
+            sender.stop()
+        client = getattr(self, "_registry_client", None)
+        if client:
+            try:
+                cap = self.capabilities()
+                client.deregister(cap.node_id)
+                client.close()
+            except Exception:
+                pass

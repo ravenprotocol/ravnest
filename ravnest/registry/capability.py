@@ -11,6 +11,7 @@ class NodeType(str, Enum):
     AGENT              = "agent"                # LLM-wrapped agent with tool use
     DATA_SOURCE        = "data_source"          # text corpus, image store, vector/graph DB
     ORCHESTRATOR       = "orchestrator"         # request router / API gateway (Phase 6)
+    FEDERATED          = "federated"             # FL coordinator node
 
 
 class ComputeSubtype(str, Enum):
