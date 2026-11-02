@@ -116,6 +116,9 @@ def main():
     # Skip coordinator-side DP (useful when gradient DP is enough)
     parser.add_argument("--no-upload-dp",      action="store_true",
                         help="Disable output-perturbation DP on the uploaded delta")
+    parser.add_argument("--registry",          default=None,
+                        help="Ravnest registry address (e.g. localhost:50099). "
+                             "Discovers coordinator automatically when set.")
     args = parser.parse_args()
 
     from ravnest.federated import FLParticipant, DPConfig
@@ -130,14 +133,24 @@ def main():
         logger.info("Local gradient DP: clip_norm=%.2f noise_mult=%.2f",
                     dp.clip_norm, dp.noise_multiplier)
 
-    participant = FLParticipant(
-        coordinator_url = args.coordinator,
-        node_id         = args.node_id,
-        dp_config       = dp,
-        timeout         = args.timeout,
-    )
-    logger.info("Participant %s  →  coordinator %s",
-                participant.node_id, args.coordinator)
+    if args.registry:
+        logger.info("Discovering coordinator via registry %s", args.registry)
+        participant = FLParticipant.from_registry(
+            registry_address = args.registry,
+            node_id          = args.node_id,
+            dp_config        = dp,
+            timeout          = args.timeout,
+        )
+        logger.info("Participant %s  →  registry %s", participant.node_id, args.registry)
+    else:
+        participant = FLParticipant(
+            coordinator_url = args.coordinator,
+            node_id         = args.node_id,
+            dp_config       = dp,
+            timeout         = args.timeout,
+        )
+        logger.info("Participant %s  →  coordinator %s",
+                    participant.node_id, args.coordinator)
 
     # Build local model and dataset
     model = build_model(args.input_size, args.hidden_size, args.output_size)

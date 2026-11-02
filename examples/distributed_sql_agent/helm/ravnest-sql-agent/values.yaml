@@ -117,6 +117,17 @@ ollama:
     storageClass: ""
     size: 20Gi
 
+# ── Ravnest Registry ─────────────────────────────────────────────────────────
+registry:
+  # Set to true to deploy an in-cluster Ravnest registry.
+  # When false, set registryAddress to an external registry host:port.
+  enabled: true
+  port: 50099
+  # External registry address (ignored when enabled=true — cluster DNS is used).
+  # Example: "my-registry.example.com:50099"
+  externalAddress: ""
+  resources: {}
+
 # ── Database (SQLite) ─────────────────────────────────────────────────────────
 database:
   # PVC used by the SQL tool node and the agent (schema read at startup)

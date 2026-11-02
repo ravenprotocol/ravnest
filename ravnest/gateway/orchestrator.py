@@ -72,10 +72,43 @@ class Orchestrator:
         self._max_retries          = max_retries
         self._rag_header           = rag_context_header
 
-        # Lazily initialised routers
+        # Routers — initialised from registry addresses when provided
         self._compute_router:     Optional[Any] = None
         self._agent_router:       Optional[Any] = None
         self._data_router:        Optional[Any] = None
+
+        if compute_registry:
+            try:
+                from ravnest.compute.router import ComputeRouter
+                self._compute_router = ComputeRouter(
+                    registry_address=compute_registry,
+                    max_retries=max_retries,
+                )
+                logger.info("[Orchestrator] ComputeRouter → %s", compute_registry)
+            except Exception as exc:
+                logger.warning("[Orchestrator] Could not init ComputeRouter: %s", exc)
+
+        if agent_registry:
+            try:
+                from ravnest.agents.router import AgentRouter
+                self._agent_router = AgentRouter(
+                    registry_address=agent_registry,
+                    max_retries=max_retries,
+                )
+                logger.info("[Orchestrator] AgentRouter → %s", agent_registry)
+            except Exception as exc:
+                logger.warning("[Orchestrator] Could not init AgentRouter: %s", exc)
+
+        if data_source_registry:
+            try:
+                from ravnest.data_sources.router import DataRouter
+                self._data_router = DataRouter(
+                    registry_address=data_source_registry,
+                    max_retries=max_retries,
+                )
+                logger.info("[Orchestrator] DataRouter → %s", data_source_registry)
+            except Exception as exc:
+                logger.warning("[Orchestrator] Could not init DataRouter: %s", exc)
 
         # Local backends for non-registry usage
         self._local_compute:      List[Any] = []
@@ -428,6 +461,9 @@ class Orchestrator:
                     return b
         if self._local_agents:
             return self._local_agents[0]
+        # Registry router fallback
+        if self._agent_router:
+            return _RouterBackendAdapter(self._agent_router, "agent")
         return None
 
     def _pick_data_source(self, source_type: Optional[str],
@@ -442,6 +478,9 @@ class Orchestrator:
                     return b
         if self._local_data_sources:
             return self._local_data_sources[0]
+        # Registry router fallback
+        if self._data_router:
+            return _RouterBackendAdapter(self._data_router, "data_source")
         return None
 
     # ── mode resolution ───────────────────────────────────────────────────

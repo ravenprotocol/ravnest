@@ -1,0 +1,62 @@
+{{- $fullname := include "ravnest-sql-agent.fullname" . -}}
+{{- if .Values.registry.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-registry
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ravnest-sql-agent.selectorLabels" . | nindent 6 }}
+      component: registry
+  template:
+    metadata:
+      labels:
+        {{- include "ravnest-sql-agent.selectorLabels" . | nindent 8 }}
+        component: registry
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: registry
+          image: "{{ .Values.image.repository }}/ravnest-sql:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3
+            - -m
+            - ravnest.registry.node_registry
+            - --port
+            - "{{ .Values.registry.port }}"
+            - --host
+            - "0.0.0.0"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.registry.port }}
+              protocol: TCP
+          {{- with .Values.registry.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+{{- end }}

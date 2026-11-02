@@ -1,0 +1,20 @@
+{{- $fullname := include "ravnest-sql-agent.fullname" . -}}
+{{- if .Values.registry.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-registry
+  labels:
+    {{- include "ravnest-sql-agent.labels" . | nindent 4 }}
+    component: registry
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ravnest-sql-agent.selectorLabels" . | nindent 4 }}
+    component: registry
+  ports:
+    - name: grpc
+      port: {{ .Values.registry.port }}
+      targetPort: grpc
+      protocol: TCP
+{{- end }}

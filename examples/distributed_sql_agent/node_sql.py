@@ -128,9 +128,11 @@ class SQLToolBackend(DataSourceBackend):
 
 def main():
     p = argparse.ArgumentParser(description="Ravnest SQL tool node")
-    p.add_argument("--port", default=8766,       type=int)
-    p.add_argument("--host", default="0.0.0.0")
-    p.add_argument("--db",   default="./shop.db")
+    p.add_argument("--port",     default=8766,  type=int)
+    p.add_argument("--host",     default="0.0.0.0")
+    p.add_argument("--db",       default="./shop.db")
+    p.add_argument("--registry", default=None,
+                   help="Ravnest registry address (e.g. localhost:50099)")
     args = p.parse_args()
 
     if not pathlib.Path(args.db).exists():
@@ -145,7 +147,9 @@ def main():
     backend = SQLToolBackend(db_path=args.db)
     server  = NodeServer(host=args.host, port=args.port)
     server.add_data_source(backend)
-    server.run()
+    if args.registry:
+        print(f"[sql-tool]   registry = {args.registry}")
+    server.run(registry_address=args.registry)
 
 
 if __name__ == "__main__":

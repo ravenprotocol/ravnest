@@ -75,6 +75,8 @@ spec:
             - name: HF_TOKEN
               value: "{{ .Values.compute.ravnest.hfToken }}"
             {{- end }}
+            - name: REGISTRY
+              value: "{{ if .Values.registry.enabled }}{{ include "ravnest-sql-agent.fullname" . }}-registry:{{ .Values.registry.port }}{{ else }}{{ .Values.registry.externalAddress }}{{ end }}"
           resources:
             {{- toYaml .Values.compute.ravnest.resources | nindent 12 }}
           # Readiness: HTTP — only ROOT (ordinal 0) passes; STEM/LEAF remain
@@ -170,6 +172,8 @@ spec:
             - name: OLLAMA_BASE_URL
               value: "{{ include "ravnest-sql-agent.ollamaUrl" . }}"
             {{- end }}
+            - name: REGISTRY
+              value: "{{ if .Values.registry.enabled }}{{ include "ravnest-sql-agent.fullname" . }}-registry:{{ .Values.registry.port }}{{ else }}{{ .Values.registry.externalAddress }}{{ end }}"
           {{- if eq $backend "vllm" }}
           resources:
             {{- toYaml .Values.compute.vllm.resources | nindent 12 }}

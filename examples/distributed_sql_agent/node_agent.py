@@ -281,26 +281,49 @@ def main():
     p.add_argument("--max-steps",   default=6,                         type=int)
     p.add_argument("--db",          default="./shop.db",
                    help="Path to SQLite DB used to read schema for the prompt")
+    p.add_argument("--registry",    default=None,
+                   help="Ravnest registry address (e.g. localhost:50099). "
+                        "Discovers compute and sql nodes automatically when set.")
     args = p.parse_args()
 
     schema = _fetch_schema(args.db)
 
+    if args.registry:
+        from ravnest.mesh.node_client import NodeClient
+        print(f"[agent] Discovering nodes via registry {args.registry}")
+        compute_client = NodeClient.from_registry(
+            args.registry,
+            node_type="standalone_compute",
+        )
+        sql_client = NodeClient.from_registry(
+            args.registry,
+            node_type="data_source",
+            subtype="sql",
+        )
+        compute_url = compute_client._base_url
+        sql_url     = sql_client._base_url
+    else:
+        compute_url = args.compute_url
+        sql_url     = args.sql_url
+
     print(f"[agent] Starting distributed SQL agent node")
-    print(f"[agent]   compute → {args.compute_url}")
-    print(f"[agent]   sql     → {args.sql_url}")
+    print(f"[agent]   compute → {compute_url}")
+    print(f"[agent]   sql     → {sql_url}")
     print(f"[agent]   model   = {args.model}")
     print(f"[agent]   endpoint = http://{args.host}:{args.port}")
 
     agent  = DistributedSQLAgent(
-        compute_url = args.compute_url,
-        sql_url     = args.sql_url,
+        compute_url = compute_url,
+        sql_url     = sql_url,
         db_schema   = schema,
         model       = args.model,
         max_steps   = args.max_steps,
     )
     server = NodeServer(host=args.host, port=args.port)
     server.add_agent(agent)
-    server.run()
+    if args.registry:
+        print(f"[agent]   registry = {args.registry}")
+    server.run(registry_address=args.registry)
 
 
 if __name__ == "__main__":

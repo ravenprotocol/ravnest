@@ -57,6 +57,8 @@ def start_coordinator(args) -> subprocess.Popen:
             "--staleness-bound",         str(args.staleness_bound),
             "--staleness-discount",      str(args.staleness_discount),
         ]
+    if args.registry:
+        cmd += ["--registry", args.registry]
     if args.save_path:
         cmd += ["--save-path", args.save_path]
 
@@ -92,6 +94,8 @@ def start_participant(node_id: str, args) -> subprocess.Popen:
         ]
     if args.no_upload_dp:
         cmd.append("--no-upload-dp")
+    if args.registry:
+        cmd += ["--registry", args.registry]
 
     print(f"[launcher] Starting participant {node_id}")
     return subprocess.Popen(cmd)
@@ -131,6 +135,10 @@ def main():
     parser.add_argument("--min-updates-for-advance", type=int, default=1)
     parser.add_argument("--staleness-bound",       type=int, default=0)
     parser.add_argument("--staleness-discount",    type=float, default=1.0)
+    # Registry
+    parser.add_argument("--registry",          default=None,
+                        help="Ravnest registry address (e.g. localhost:50099). "
+                             "Nodes auto-register; participants discover coordinator.")
     # Misc
     parser.add_argument("--save-path",         default=None)
     args = parser.parse_args()

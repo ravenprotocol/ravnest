@@ -134,7 +134,8 @@ def start_compute_node(backend: str, model: str, port: int, host: str,
     )
 
 
-def start_node(node: dict, model: str) -> subprocess.Popen:
+def start_node(node: dict, model: str,
+               registry: str | None = None) -> subprocess.Popen:
     cmd = [
         sys.executable, str(node["script"]),
         "--port", str(node["port"]),
@@ -142,6 +143,8 @@ def start_node(node: dict, model: str) -> subprocess.Popen:
     ]
     if node["name"] == "agent":
         cmd += ["--model", model]
+    if registry:
+        cmd += ["--registry", registry]
 
     return subprocess.Popen(
         cmd,
@@ -218,6 +221,9 @@ def main():
                    help="[ravnest only] torchrun master address")
     p.add_argument("--ravnest-master-port", default=29500, type=int,
                    help="[ravnest only] torchrun master port")
+    p.add_argument("--registry", default=None,
+                   help="Ravnest registry address (e.g. localhost:50099). "
+                        "When set, all nodes register and agent discovers peers.")
     p.add_argument("--query",   default=None,
                    help="Ask a custom question after startup (overrides demo questions)")
     p.add_argument("--no-demo", action="store_true",
@@ -263,6 +269,22 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    # Optionally start the Ravnest registry
+    if args.registry:
+        registry_host, _, registry_port = args.registry.partition(":")
+        print(f"[run] Starting registry node ({args.registry})…")
+        registry_proc = subprocess.Popen(
+            [sys.executable, "-m", "ravnest.registry.node_registry",
+             "--port", registry_port or "50099",
+             "--host", registry_host or "0.0.0.0"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            text=True,
+        )
+        procs.insert(0, registry_proc)
+        time.sleep(1.0)  # give the registry a moment to bind
+
     # Start compute node (backend-specific)
     print(f"[run] Starting compute node (backend={args.backend}, port=8765)…")
     compute_proc = start_compute_node(
@@ -280,7 +302,7 @@ def main():
     # Start SQL tool and agent nodes
     for node in SQL_NODES:
         print(f"[run] Starting {node['name']} node (port {node['port']})…")
-        proc = start_node(node, args.model)
+        proc = start_node(node, args.model, registry=args.registry)
         procs.append(proc)
         time.sleep(0.3)
 

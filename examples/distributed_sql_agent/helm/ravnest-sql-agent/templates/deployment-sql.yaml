@@ -46,6 +46,8 @@ spec:
               value: "{{ .Values.sql.port }}"
             - name: DB_PATH
               value: /data/shop.db
+            - name: REGISTRY
+              value: "{{ if .Values.registry.enabled }}{{ include "ravnest-sql-agent.fullname" . }}-registry:{{ .Values.registry.port }}{{ else }}{{ .Values.registry.externalAddress }}{{ end }}"
           volumeMounts:
             - name: db-volume
               mountPath: /data

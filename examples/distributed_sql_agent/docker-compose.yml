@@ -63,6 +63,30 @@ services:
     volumes:
       - db-data:/data
 
+  # ── Ravnest Registry ──────────────────────────────────────────────────────
+  registry:
+    build:
+      <<: *build-cpu
+      target: sql   # any target that has the ravnest package installed
+    restart: unless-stopped
+    ports:
+      - "50099:50099"
+    command:
+      - python3
+      - -m
+      - ravnest.registry.node_registry
+      - --port
+      - "50099"
+      - --host
+      - "0.0.0.0"
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import grpc; ch=grpc.insecure_channel('localhost:50099'); ch.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   # ── Compute node (Llama via Ollama) ───────────────────────────────────────
   compute:
     build:
@@ -74,9 +98,12 @@ services:
     environment:
       COMPUTE_MODEL: ${MODEL:-llama3.2}
       OLLAMA_BASE_URL: http://ollama:11434
+      REGISTRY: ${REGISTRY:-registry:50099}
     depends_on:
       ollama-init:
         condition: service_completed_successfully
+      registry:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8765/health"]
       interval: 10s
@@ -96,9 +123,12 @@ services:
       - db-data:/data
     environment:
       DB_PATH: /data/shop.db
+      REGISTRY: ${REGISTRY:-registry:50099}
     depends_on:
       db-init:
         condition: service_completed_successfully
+      registry:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8766/health"]
       interval: 10s
@@ -121,10 +151,13 @@ services:
       COMPUTE_URL: http://compute:8765
       SQL_URL: http://sql:8766
       DB_PATH: /data/shop.db
+      REGISTRY: ${REGISTRY:-registry:50099}
     depends_on:
       compute:
         condition: service_healthy
       sql:
+        condition: service_healthy
+      registry:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8767/health"]
