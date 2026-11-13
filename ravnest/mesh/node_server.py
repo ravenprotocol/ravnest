@@ -134,6 +134,7 @@ class NodeServer:
 
         app = web.Application()
         app.router.add_post("/message",      self._handle_message)
+        app.router.add_post("/stream",       self._handle_stream)
         app.router.add_get("/health",        self._handle_health)
         app.router.add_get("/capabilities",  self._handle_capabilities)
         app.router.add_get("/",              self._handle_root)
@@ -178,6 +179,162 @@ class NodeServer:
                 "federated":   len(self._federated_backends),
             },
         })
+
+    async def _handle_stream(self, request) -> "web.StreamResponse":
+        """
+        POST /stream — streaming inference via NDJSON.
+
+        Accepts a NodeMessage body (same format as /message) and streams
+        tokens back as newline-delimited JSON::
+
+            {"token": "<text>"}   # zero or more token lines
+            {"done": true}        # final sentinel
+
+        On error::
+
+            {"error": "<message>", "done": true}
+
+        Only compute nodes support per-token streaming; for agent and
+        data_source nodes each logical chunk is emitted as one "token" line.
+        """
+        import json as _json
+        from aiohttp import web
+
+        response = web.StreamResponse(headers={"Content-Type": "application/x-ndjson"})
+        await response.prepare(request)
+
+        async def _emit(obj: dict) -> None:
+            await response.write((_json.dumps(obj) + "\n").encode())
+
+        try:
+            body = await request.json()
+            from ravnest.mesh.base import NodeMessage
+            msg = NodeMessage.from_dict(body)
+            node_type = (msg.node_type or "").lower()
+
+            if node_type == "compute":
+                await self._stream_compute(msg, _emit)
+            elif node_type == "agent":
+                await self._stream_agent(msg, _emit)
+            elif node_type == "data_source":
+                await self._stream_data_source(msg, _emit)
+            else:
+                await _emit({"error": f"Unknown node_type for streaming: {node_type}",
+                             "done": True})
+                return response
+
+        except Exception as exc:
+            logger.exception("[NodeServer] /stream error")
+            try:
+                import json as _json2
+                await response.write(
+                    (_json2.dumps({"error": str(exc), "done": True}) + "\n").encode()
+                )
+            except Exception:
+                pass
+
+        try:
+            await response.write_eof()
+        except Exception:
+            pass
+        return response
+
+    async def _stream_compute(self, msg: "NodeMessage", emit) -> None:
+        """Stream tokens from a compute backend."""
+        from ravnest.compute.base import GenerateRequest, Message
+
+        backend = self._pick_backend(
+            self._compute_backends, msg.node_id,
+            lambda b, m: m in (b.capabilities().models or []),
+            msg.model,
+        )
+        if backend is None:
+            await emit({"error": "No compute backend available", "done": True})
+            return
+
+        p = msg.payload
+        messages = [Message(role=m["role"], content=m["content"])
+                    for m in p.get("messages", [])]
+        req = GenerateRequest(
+            prompt      = p.get("prompt", ""),
+            messages    = messages or None,
+            model       = msg.model or p.get("model"),
+            max_tokens  = p.get("max_tokens", 256),
+            temperature = p.get("temperature", 1.0),
+            top_p       = p.get("top_p", 1.0),
+            top_k       = p.get("top_k", 50),
+            stop        = p.get("stop"),
+            stream      = True,
+        )
+
+        cap = backend.capabilities()
+        if cap.supports_streaming:
+            async for token in backend.agenerate_stream(req):
+                await emit({"token": token})
+        else:
+            # Non-streaming backend: buffer and emit as one chunk
+            resp = await backend.agenerate(req)
+            if resp.text:
+                await emit({"token": resp.text})
+
+        await emit({"done": True})
+
+    async def _stream_agent(self, msg: "NodeMessage", emit) -> None:
+        """Stream agent response chunks."""
+        from ravnest.agents.base import AgentRequest, Message
+
+        backend = self._pick_backend(
+            self._agent_backends, msg.node_id,
+            lambda b, t: (t is None or b.capabilities().agent_type == t),
+            msg.source_type,
+        )
+        if backend is None:
+            await emit({"error": "No agent backend available", "done": True})
+            return
+
+        p = msg.payload
+        messages = [Message(role=m["role"], content=m["content"])
+                    for m in p.get("messages", [])]
+        req = AgentRequest(
+            messages    = messages,
+            model       = msg.model or p.get("model"),
+            max_steps   = p.get("max_steps", 10),
+            max_tokens  = p.get("max_tokens", 1024),
+            temperature = p.get("temperature", 0.7),
+        )
+
+        async for chunk in backend.astream(req):
+            if chunk:
+                await emit({"token": chunk})
+
+        await emit({"done": True})
+
+    async def _stream_data_source(self, msg: "NodeMessage", emit) -> None:
+        """Stream data chunks from a data source backend."""
+        from ravnest.data_sources.base import DataRequest
+
+        backend = self._pick_backend(
+            self._data_source_backends, msg.node_id,
+            lambda b, t: (t is None or b.capabilities().source_type == t),
+            msg.source_type,
+        )
+        if backend is None:
+            await emit({"error": "No data source backend available", "done": True})
+            return
+
+        p = msg.payload
+        req = DataRequest(
+            query    = p.get("query", ""),
+            modality = p.get("modality", "text"),
+            top_k    = p.get("top_k", 5),
+            filters  = p.get("filters", {}),
+        )
+
+        async for chunk in backend.astream(req):
+            await emit({"token": chunk.content, "score": chunk.score,
+                        "source": chunk.source, "chunk_id": chunk.chunk_id})
+
+        await emit({"done": True})
 
     async def _handle_health(self, request) -> "web.Response":
         from aiohttp import web

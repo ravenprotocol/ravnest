@@ -144,26 +144,59 @@ class NodeClient:
 
     async def astream(self, message: NodeMessage) -> AsyncIterator[str]:
         """
-        Async streaming — sends the message and yields SSE/NDJSON tokens.
+        Async streaming — POST to ``/stream`` and yield NDJSON tokens.
 
-        For backends that support streaming, the server should emit
-        newline-delimited JSON; each line is a token dict with a "token" key.
-        Falls back to a single-response yield for non-streaming backends.
+        The server emits newline-delimited JSON::
+
+            {"token": "<text>"}   # repeated for each token
+            {"done": true}        # final sentinel
+
+        Falls back to ``/message`` (single response) when the server does
+        not expose a ``/stream`` endpoint (HTTP 404) or for non-streaming
+        backends (server emits one token then done).
         """
         import httpx
+        import json as _json
 
-        # Most NodeServer backends return full responses; we do a single call
-        # and yield the text as one chunk.  Real streaming would require the
-        # server to emit SSE — this is the v1 implementation.
-        resp = await self.asend(message)
-        if resp.ok:
-            text = resp.result.get("text", "")
-            if text:
-                yield text
-            for chunk in resp.result.get("chunks", []):
-                yield chunk.get("content", "")
-        else:
-            raise RuntimeError(f"Remote node error: {resp.error}")
+        url = f"{self._base_url}/stream"
+        body = message.to_dict()
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream("POST", url, json=body) as resp:
+                    if resp.status_code == 404:
+                        # Server does not support /stream — fall back
+                        resp_full = await self.asend(message)
+                        if resp_full.ok:
+                            text = resp_full.result.get("text", "")
+                            if text:
+                                yield text
+                            for chunk in resp_full.result.get("chunks", []):
+                                yield chunk.get("content", "")
+                        else:
+                            raise RuntimeError(f"Remote node error: {resp_full.error}")
+                        return
+
+                    resp.raise_for_status()
+
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            obj = _json.loads(line)
+                        except _json.JSONDecodeError:
+                            continue
+
+                        if obj.get("done"):
+                            break
+                        if "error" in obj:
+                            raise RuntimeError(f"Remote stream error: {obj['error']}")
+                        token = obj.get("token")
+                        if token:
+                            yield token
+
+        except httpx.ConnectError as exc:
+            raise RuntimeError(f"Cannot connect to node at {self._base_url}: {exc}") from exc
 
     # ── class methods ─────────────────────────────────────────────────────
 
