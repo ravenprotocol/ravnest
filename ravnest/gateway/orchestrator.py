@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from .base import GatewayRequest, GatewayResponse
 
@@ -134,6 +134,129 @@ class Orchestrator:
     def handle(self, request: GatewayRequest) -> GatewayResponse:
         """Handle a GatewayRequest synchronously."""
         return _run(self.ahandle(request))
+
+    def handle_stream(self, request: GatewayRequest) -> "AsyncIterator[str]":
+        """Synchronous entry-point that returns the async streaming generator."""
+        return self.ahandle_stream(request)
+
+    async def ahandle_stream(self, request: GatewayRequest) -> AsyncIterator[str]:
+        """
+        Stream tokens for a GatewayRequest.
+
+        Yields string tokens as they are produced.  Supported modes:
+
+        * ``generate`` — per-token streaming via the compute backend.
+        * ``agent``    — per-chunk streaming via the agent backend.
+        * ``rag``      — retrieval (buffered) then streamed generation.
+
+        All other modes (``query``, ``pipeline``) fall back to a single
+        yield of the full response text.
+        """
+        mode = self._resolve_mode(request)
+
+        if mode == "generate":
+            async for token in self._stream_generate(request):
+                yield token
+
+        elif mode == "agent":
+            async for token in self._stream_agent(request):
+                yield token
+
+        elif mode == "rag":
+            async for token in self._stream_rag(request):
+                yield token
+
+        else:
+            # query / pipeline — buffer and yield once
+            resp = await self.ahandle(request)
+            if resp.ok and resp.text:
+                yield resp.text
+            elif not resp.ok:
+                raise RuntimeError(resp.error)
+
+    async def _stream_generate(self, req: GatewayRequest) -> AsyncIterator[str]:
+        """Stream tokens from a compute backend."""
+        from ravnest.compute.base import GenerateRequest, Message
+
+        messages = [Message(role=m["role"], content=m["content"])
+                    for m in req.messages] if req.messages else None
+
+        greq = GenerateRequest(
+            prompt      = req.prompt if not messages else "",
+            messages    = messages,
+            model       = req.model,
+            max_tokens  = req.max_tokens,
+            temperature = req.temperature,
+            top_p       = req.top_p,
+            stop        = req.stop,
+            stream      = True,
+        )
+
+        backend = self._pick_compute(req.model, req.node_id)
+        if backend is None:
+            raise RuntimeError("No compute backend available")
+
+        cap = getattr(backend, "capabilities", lambda: None)()
+        supports = getattr(cap, "supports_streaming", False) if cap else False
+
+        if supports:
+            async for token in backend.agenerate_stream(greq):
+                yield token
+        else:
+            resp = await backend.agenerate(greq)
+            if resp.text:
+                yield resp.text
+
+    async def _stream_agent(self, req: GatewayRequest) -> AsyncIterator[str]:
+        """Stream chunks from an agent backend."""
+        from ravnest.agents.base import AgentRequest, Message
+
+        messages = [Message(role=m["role"], content=m["content"])
+                    for m in req.messages]
+        if req.prompt and not any(m.get("role") == "user" for m in req.messages):
+            messages.append(Message(role="user", content=req.prompt))
+
+        areq = AgentRequest(
+            messages    = messages,
+            model       = req.model,
+            max_steps   = req.max_steps,
+            max_tokens  = req.max_tokens,
+            temperature = req.temperature,
+            tools       = req.tools,
+        )
+
+        backend = self._pick_agent(req.agent_type, req.node_id)
+        if backend is None:
+            raise RuntimeError("No agent backend available")
+
+        async for chunk in backend.astream(areq):
+            if chunk:
+                yield chunk
+
+    async def _stream_rag(self, req: GatewayRequest) -> AsyncIterator[str]:
+        """Retrieve context (buffered), then stream the generation."""
+        query_resp = await self._handle_query(req)
+        if not query_resp.ok:
+            raise RuntimeError(query_resp.error)
+
+        context_parts = [c["content"] for c in query_resp.chunks if c.get("content")]
+        context       = "\n\n".join(context_parts)
+        augmented     = (f"{self._rag_header}\n\n{context}\n\n"
+                         f"Question: {req.query_text()}")
+
+        augmented_req = GatewayRequest(
+            prompt      = augmented,
+            model       = req.model,
+            max_tokens  = req.max_tokens,
+            temperature = req.temperature,
+            top_p       = req.top_p,
+            stop        = req.stop,
+            mode        = "generate",
+            node_id     = req.node_id,
+            stream      = True,
+        )
+        async for token in self._stream_generate(augmented_req):
+            yield token
 
     async def ahandle(self, request: GatewayRequest) -> GatewayResponse:
         """Handle a GatewayRequest asynchronously."""
@@ -521,6 +644,10 @@ class _RouterBackendAdapter:
 
     async def agenerate(self, req):
         return await self._router.agenerate(req)
+
+    async def agenerate_stream(self, req):
+        async for token in self._router.agenerate_stream(req):
+            yield token
 
     async def aembed(self, req):
         return await self._router.aembed(req)

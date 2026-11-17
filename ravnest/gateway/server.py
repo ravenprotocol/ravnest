@@ -119,6 +119,7 @@ class GatewayServer:
         app.router.add_post("/query",                     self._handle_query)
         app.router.add_post("/rag",                       self._handle_rag)
         app.router.add_post("/pipeline",                  self._handle_pipeline)
+        app.router.add_post("/stream",                    self._handle_stream_chat)
         app.router.add_post("/v1/chat/completions",       self._handle_openai_compat)
         if self._cors:
             app.middlewares.append(self._cors_middleware)
@@ -131,7 +132,7 @@ class GatewayServer:
         info = {
             "service": "Ravnest Gateway",
             "version": "0.1.0",
-            "endpoints": ["/chat", "/query", "/rag", "/pipeline",
+            "endpoints": ["/chat", "/stream", "/query", "/rag", "/pipeline",
                           "/v1/chat/completions", "/health", "/nodes"],
         }
         return web.json_response(info)
@@ -192,6 +193,11 @@ class GatewayServer:
         )
         resp = await self._orch.ahandle(greq)
 
+        if greq.stream:
+            return await self._openai_stream(greq, request)
+
+        resp = await self._orch.ahandle(greq)
+
         if not resp.ok:
             return web.json_response(
                 {"error": {"message": resp.error, "type": "gateway_error"}},
@@ -236,9 +242,124 @@ class GatewayServer:
         except Exception as exc:
             return web.json_response({"error": f"Bad request: {exc}"}, status=400)
 
+        if greq.stream:
+            return await self._dispatch_stream(greq, request)
+
         resp = await self._orch.ahandle(greq)
         status = 200 if resp.ok else 500
         return web.json_response(resp.to_dict(), status=status)
+
+    async def _dispatch_stream(self, greq: GatewayRequest, request):
+        """
+        SSE streaming response for requests with ``stream=True``.
+
+        Emits Server-Sent Events::
+
+            data: {"token": "<text>"}\n\n
+            ...
+            data: [DONE]\n\n
+        """
+        from aiohttp import web
+
+        response = web.StreamResponse(headers={
+            "Content-Type":  "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        })
+        await response.prepare(request)
+
+        async def _sse(obj) -> None:
+            line = "data: " + json.dumps(obj) + "\n\n"
+            await response.write(line.encode())
+
+        try:
+            async for token in self._orch.ahandle_stream(greq):
+                await _sse({"token": token})
+        except Exception as exc:
+            logger.exception("[GatewayServer] stream error")
+            await _sse({"error": str(exc)})
+
+        await response.write(b"data: [DONE]\n\n")
+        try:
+            await response.write_eof()
+        except Exception:
+            pass
+        return response
+
+    async def _handle_stream_chat(self, request):
+        """
+        POST /stream — dedicated streaming endpoint (always streams).
+
+        Equivalent to POST /chat with ``"stream": true`` in the body,
+        but clients that prefer a fixed URL can use this directly.
+        """
+        from aiohttp import web
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        body["stream"] = True
+        if "mode" not in body:
+            body["mode"] = "generate"
+        try:
+            greq = GatewayRequest.from_dict(body)
+        except Exception as exc:
+            return web.json_response({"error": f"Bad request: {exc}"}, status=400)
+
+        return await self._dispatch_stream(greq, request)
+
+    async def _openai_stream(self, greq: GatewayRequest, request):
+        """SSE streaming in OpenAI delta format for /v1/chat/completions."""
+        from aiohttp import web
+
+        cmpl_id = f"chatcmpl-{greq.request_id[:8]}"
+        created = int(time.time())
+        model   = greq.model or "unknown"
+
+        response = web.StreamResponse(headers={
+            "Content-Type":      "text/event-stream",
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",
+        })
+        await response.prepare(request)
+
+        async def _sse(obj) -> None:
+            await response.write(("data: " + json.dumps(obj) + "\n\n").encode())
+
+        # OpenAI-style: first chunk has role delta, subsequent have content delta
+        await _sse({
+            "id": cmpl_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant"},
+                         "finish_reason": None}],
+        })
+
+        try:
+            async for token in self._orch.ahandle_stream(greq):
+                await _sse({
+                    "id": cmpl_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0,
+                                 "delta": {"content": token},
+                                 "finish_reason": None}],
+                })
+        except Exception as exc:
+            logger.exception("[GatewayServer] OpenAI stream error")
+            await _sse({"error": {"message": str(exc), "type": "gateway_error"}})
+
+        # Final chunk with finish_reason=stop
+        await _sse({
+            "id": cmpl_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        })
+        await response.write(b"data: [DONE]\n\n")
+        try:
+            await response.write_eof()
+        except Exception:
+            pass
+        return response
 
     # ── CORS middleware ────────────────────────────────────────────────────
 
